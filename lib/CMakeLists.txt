@@ -1,1 +1,2 @@
-add_subdirectory(LoopProfiling/ArrayListSampleInstrument)
+add_subdirectory(LoopSampler)
+add_subdirectory(IDAssigner)
