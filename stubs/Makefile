@@ -6,19 +6,15 @@ TARGET=target
 
 HOME_PATH=/home/boqin/Projects/NewComAir
 ID_PASS=cmake-build-debug/lib/IDAssigner/libIDAssignerPass.so
-#LOOP_ARRAY_LIST_SAMPLE_PASS=stubs/lib/libArrayListSampleInstrumentPass.so
-NEW_LOOP_ARRAY_LIST_SAMPLE_PASS=cmake-build-debug/lib/LoopSampler/Instrumentor/libArrayListSampleInstrumentPass.so
+LOOP_ARRAY_LIST_SAMPLE_PASS=stubs/lib/libArrayListSampleInstrumentPass.so
 INLINE_PASS=stubs/lib/libMakeFunctionInlinePass.so
 RUNTIME_LIB=stubs/lib/prof-lall-hook.o
 SRC_FILE=${HOME_PATH}/stubs/Telnet.c
 
-all: target target.lalls target.new
+all: target target.lalls
 
 target: target.bc
 	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.bc -o target
-
-target.new: target.inline.bc
-	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.inline.bc -lm -lrt -o target.new
 
 target.lalls: target.inline.bc
 	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.inline.bc -lm -lrt -o target.lalls

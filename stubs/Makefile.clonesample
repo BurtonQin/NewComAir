@@ -1,0 +1,41 @@
+CXX=clang
+CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
+OP_CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
+LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
+TARGET=target
+
+HOME_PATH=/home/boqin/Projects/NewComAir
+ID_PASS=cmake-build-debug/lib/IDAssigner/libIDAssignerPass.so
+LOOP_ARRAY_LIST_SAMPLE_PASS=cmake-build-debug/lib/LoopSampler/Instrumentor/libArrayListSampleInstrumentPass.so
+COMMON_LIB=cmake-build-debug/lib/Common/libCommonLib.a
+INLINE_PASS=stubs/lib/libMakeFunctionInlinePass.so
+RUNTIME_LIB=stubs/lib/prof-lall-hook.o
+SRC_FILE=${HOME_PATH}/stubs/Telnet.c
+
+all: target.empty
+
+target.empty: target.inline.bc
+	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.inline.bc -lm -lrt -o target.empty
+
+target.inline.bc: target.pre.inline.bc
+	opt -load ${HOME_PATH}/${INLINE_PASS} -func-inline -lib-inline 0 target.pre.inline.bc > target.inline.bc
+
+target.pre.inline.bc: target.lalls.bc
+	llvm-link ${HOME_PATH}/${RUNTIME_LIB} target.lalls.bc -o target.pre.inline.bc
+
+target.lalls.bc: target.bc.id
+	opt -load ${HOME_PATH}/${LOOP_ARRAY_LIST_SAMPLE_PASS} -array-list-sample-instrument \
+	 -noLine 103 -strFile ${SRC_FILE} \
+	 -strFunc indexOf target.bc.id > target.lalls.bc
+
+target.bc.id: target.ls.bc
+	opt -load ${HOME_PATH}/${ID_PASS} -tag-id target.ls.bc > target.bc.id
+
+target.ls.bc: target.bc
+	opt -loop-simplify target.bc > target.ls.bc
+
+target.bc: ${SRC_FILE}
+	${CXX} ${CFLAGS} ${SRC_FILE} -c -o target.bc
+
+clean:
+	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id target.aprof *.ll *.aprof *.inline *.txt *.lalls

@@ -12,6 +12,8 @@ import time
 import string
 
 import pandas as pd
+from pylab import *
+from scipy.optimize import curve_fit
 
 
 CASE_NAME = './inputs/input_case_{0}.txt'
@@ -36,7 +38,7 @@ def run_time_command(target, result):
 	inputs = []
 	exe_times = []
 	#for i in range(5000, 55000, 5000):
-	for i in range(5000, 55000, 500):
+	for i in range(5000, 55000, 1000):
 		file_name = generate_input(i)
 		command = [target, ' ', file_name, ' ', CONSTANT_SONG]
 		with open('test.sh', 'w') as run_script:
@@ -54,8 +56,127 @@ def run_time_command(target, result):
 	df = pd.DataFrame(data={'inputs': inputs, 'time': exe_times})
 	df.to_csv(result, index=False)
 
+def polyfit(x, y, degree):
+    results = {}
+    coeffs = np.polyfit(x, y, degree)
+    results['polynomial'] = coeffs.tolist()
+
+    # r-squared
+    p = np.poly1d(coeffs)
+    # fit values, and mean
+    yhat = p(x)                         # or [p(z) for z in x]
+    ybar = np.sum(y)/len(y)          # or sum(y)/len(y)
+    ssreg = np.sum((yhat-ybar)**2)   # or sum([ (yihat - ybar)**2 for yihat in yhat])
+    sstot = np.sum((y - ybar)**2)    # or sum([ (yi - ybar)**2 for yi in y])
+    results['determination'] = ssreg / sstot  # 准确率
+    return results
+
+
+def calculate_curve_fit(result):
+    """
+    calculate the expression of target function
+    :return:
+    """
+    df = pd.read_csv(result)
+    xdata = df[['inputs']].apply(pd.to_numeric)
+    ydata = df[['time']].apply(pd.to_numeric)
+
+    xdata = [item[0] for item in xdata.values]
+    ydata = [item[0] - 4 for item in ydata.values]
+
+    # print y = x^a +/- b
+    z1 = polyfit(xdata, ydata, 2)
+    print(z1)
+
+    from scipy import stats
+    xdata = stats.zscore(xdata)
+    ydata = stats.zscore(ydata)
+    z1 = polyfit(xdata, ydata, 2)
+    print(z1)
+
+# plot:
+def plot(result, picture):
+    df = pd.read_csv(result)
+    # xdata = df[['inputs']].apply(pd.to_numeric)
+    # ydata = df[['time']].apply(pd.to_numeric)
+    matplotlib.rcParams.update({'font.size': 30})
+
+    # x轴的label
+    xlabel('input size', fontsize=30, labelpad=2)
+
+    # y轴的label
+    ylabel(r'time cost(s)', fontsize=30, labelpad=5)
+    # df['time'] = df['time'].apply(lambda y: 1000 * y)
+    # Create plots with pre-defined labels.
+    plt.scatter(df['inputs'], df['time'], marker='o', s=50)
+
+    grid(True)
+    xgridlines = getp(gca(), 'xgridlines')
+    ygridlines = getp(gca(), 'ygridlines')
+    setp(xgridlines, 'linestyle', ':')
+    setp(ygridlines, 'linestyle', ':')
+
+    legend = plt.legend(loc='upper center', shadow=False, fontsize='22', numpoints=1)
+
+    # Put a nicer background color on the legend.
+    legend.get_frame().set_facecolor('#FFFFFF')
+
+    fig = plt.gcf()
+
+    plt.subplots_adjust(left=0.2, right=0.95, top=0.93, bottom=0.2)
+    fig.set_size_inches(8, 8)
+
+    # fig.suptitle('Cost plot (apache34464:WaitForString)', fontsize=10)
+    fig.savefig(picture, dpi=300)
+    plt.show()
+
+def plot_multi(result, result1, result2, result3,  picture):
+    df = pd.read_csv(result)
+    df1 = pd.read_csv(result1)
+    df2 = pd.read_csv(result2)
+    df3 = pd.read_csv(result3)
+    # xdata = df[['inputs']].apply(pd.to_numeric)
+    # ydata = df[['time']].apply(pd.to_numeric)
+    matplotlib.rcParams.update({'font.size': 30})
+
+    # x轴的label
+    xlabel('input size', fontsize=30, labelpad=2)
+
+    # y轴的label
+    ylabel(r'time cost(s)', fontsize=30, labelpad=5)
+    # df['time'] = df['time'].apply(lambda y: 1000 * y)
+    # Create plots with pre-defined labels.
+    plt.scatter(df['inputs'], df['time'], marker='o', s=50, color='r', label='no pass')
+    plt.scatter(df1['inputs'], df1['time'], marker='o', s=50, color='g', label='original pass')
+    plt.scatter(df2['inputs'], df2['time'], marker='o', s=50, color='b', label='empty pass')
+    plt.scatter(df3['inputs'], df3['time'], marker='o', s=50, color='y', label='clonesample pass')
+    plt.legend()
+
+    grid(True)
+    xgridlines = getp(gca(), 'xgridlines')
+    ygridlines = getp(gca(), 'ygridlines')
+    setp(xgridlines, 'linestyle', ':')
+    setp(ygridlines, 'linestyle', ':')
+
+    # legend = plt.legend(loc='upper center', shadow=False, fontsize='22', numpoints=1)
+
+    # Put a nicer background color on the legend.
+    # legend.get_frame().set_facecolor('#FFFFFF')
+
+    fig = plt.gcf()
+
+    plt.subplots_adjust(left=0.2, right=0.95, top=0.93, bottom=0.2)
+    fig.set_size_inches(8, 8)
+
+    # fig.suptitle('Cost plot (apache34464:WaitForString)', fontsize=10)
+    fig.savefig(picture, dpi=300)
+    plt.show()
+
 
 if __name__ == '__main__':
-	run_time_command('./build/target', 'exe_time.csv')
-	run_time_command('./build/target.lalls', 'exe_time.lalls.csv')
-	run_time_command('./build/target.new', 'exe_time.new.csv')
+	#run_time_command('./targets/target', 'exe_time.csv')
+	#run_time_command('./targets/target.lalls', 'exe_time.lalls.csv')
+	#run_time_command('./targets/target.empty', 'exe_time.empty.csv')
+	#run_time_command('./targets/target.clonesample', 'exe_time.clonesample.csv')
+
+	plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')
