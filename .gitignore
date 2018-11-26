@@ -5,3 +5,15 @@ cmake-build-debug/*
 temp-test/*
 
 stubs/example/*
+
+stubs/build/*
+
+stubs/inputs/*
+
+stubs/results.O0/*
+
+stubs/results.O2/*
+
+stubs/targets.O0/*
+
+stubs/targets.O2/*

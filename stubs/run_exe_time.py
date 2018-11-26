@@ -38,7 +38,9 @@ def run_time_command(target, result):
 	inputs = []
 	exe_times = []
 	#for i in range(5000, 55000, 5000):
-	for i in range(5000, 55000, 1000):
+	#for i in range(5000, 55000, 1000):
+	for x in range(20):
+		i = 54000
 		file_name = generate_input(i)
 		command = [target, ' ', file_name, ' ', CONSTANT_SONG]
 		with open('test.sh', 'w') as run_script:
@@ -48,7 +50,7 @@ def run_time_command(target, result):
 		inputs.append(i)
 		start = time.time()
 		call(['/bin/bash', 'test.sh'])
-		exe_times.append('%.3f' % (time.time() - start))
+		exe_times.append('%.5f' % (time.time() - start))
 
 	# delete temp test.sh
 	os.remove('test.sh')
@@ -174,9 +176,27 @@ def plot_multi(result, result1, result2, result3,  picture):
 
 
 if __name__ == '__main__':
-	#run_time_command('./targets/target', 'exe_time.csv')
-	#run_time_command('./targets/target.lalls', 'exe_time.lalls.csv')
-	#run_time_command('./targets/target.empty', 'exe_time.empty.csv')
-	#run_time_command('./targets/target.clonesample', 'exe_time.clonesample.csv')
+	target_O0_dir = './targets.O0/'
+	target_O2_dir = './targets.O2/'
+	
+	result_O0_dir = './results.O0/'
+	result_O2_dir = './results.O2/'
 
-	plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')
+	nopass = 'target'
+	original = 'target.lalls'
+	clonesample = 'target.clonesample'
+	# clonesample in O0
+	#clonesampleO0 = 'target.clonesample.O0'
+
+	run_time_command(target_O0_dir + nopass, result_O0_dir + nopass + '.csv')	
+	run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
+
+	run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
+	run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
+
+	run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
+	run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
+
+	#run_time_command(target_O0_dir + clonesampleO0, result_O0_dir + clonesampleO0 + '.csv')
+
+	#plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')

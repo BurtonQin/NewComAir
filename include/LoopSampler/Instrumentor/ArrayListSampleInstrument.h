@@ -1,5 +1,5 @@
 //
-// Empty Pass demo.
+// CloneSample Pass demo.
 //
 
 #ifndef NEWCOMAIR_ARRAYLISTSAMPLEINSTRUMENT_H
@@ -29,8 +29,7 @@ struct ArrayListSampleInstrument : public ModulePass {
 
     void SetupFunctions();
 
-    // void InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT);
-    void InstrumentInnerLoop(Loop *pInnerLoop);
+    void InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT);
 
     void CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
 
@@ -43,10 +42,10 @@ struct ArrayListSampleInstrument : public ModulePass {
     /* ********** */
 
     /* Type */
-    Type *VoidType;
-    IntegerType *LongType;
+//    Type *VoidType;
+//    IntegerType *LongType;
     IntegerType *IntType;
-    PointerType *VoidPointerType;
+//    PointerType *VoidPointerType;
     /* ********** */
 
 
@@ -69,10 +68,10 @@ struct ArrayListSampleInstrument : public ModulePass {
     /* ********** */
 
     /* Constant */
-    ConstantInt *ConstantLong0;
-    ConstantInt *ConstantLong1;
+//    ConstantInt *ConstantLong0;
+//    ConstantInt *ConstantLong1;
     ConstantInt *ConstantInt0;
-    ConstantInt *ConstantInt1;
+//    ConstantInt *ConstantInt1;
     ConstantInt *ConstantSamplingRate;
     /* ********** */
 

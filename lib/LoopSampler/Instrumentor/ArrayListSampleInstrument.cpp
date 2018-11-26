@@ -1,5 +1,5 @@
 //
-// Empty Pass demo.
+// Clonesample Pass demo.
 //
 
 #include "llvm/Analysis/PostDominators.h"
@@ -51,18 +51,18 @@ char ArrayListSampleInstrument::ID = 0;
 
 void ArrayListSampleInstrument::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
-    AU.addRequired<PostDominatorTreeWrapperPass>();
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<ScalarEvolutionWrapperPass>();
+//    AU.addRequired<PostDominatorTreeWrapperPass>();
+//    AU.addRequired<DominatorTreeWrapperPass>();
+//    AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 }
 
 ArrayListSampleInstrument::ArrayListSampleInstrument() : ModulePass(ID) {
     PassRegistry &Registry = *PassRegistry::getPassRegistry();
-    initializeScalarEvolutionWrapperPassPass(Registry);
+//    initializeScalarEvolutionWrapperPassPass(Registry);
     initializeLoopInfoWrapperPassPass(Registry);
-    initializePostDominatorTreeWrapperPassPass(Registry);
-    initializeDominatorTreeWrapperPassPass(Registry);
+//    initializePostDominatorTreeWrapperPassPass(Registry);
+//    initializeDominatorTreeWrapperPassPass(Registry);
 }
 
 void ArrayListSampleInstrument::SetupTypes() {
@@ -183,21 +183,21 @@ bool ArrayListSampleInstrument::runOnModule(Module &M) {
         return false;
     }
 
-    PostDominatorTree *PDT = &(getAnalysis<PostDominatorTreeWrapperPass>(*pFunction).getPostDomTree());
-    DominatorTree *DT = &(getAnalysis<DominatorTreeWrapperPass>(*pFunction).getDomTree());
+//    PostDominatorTree *PDT = &(getAnalysis<PostDominatorTreeWrapperPass>(*pFunction).getPostDomTree());
+//    DominatorTree *DT = &(getAnalysis<DominatorTreeWrapperPass>(*pFunction).getDomTree());
     LoopInfo &LoopInfo = getAnalysis<LoopInfoWrapperPass>(*pFunction).getLoopInfo();
 
     Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
 
-    LoopSimplify(pLoop, DT);
+//    LoopSimplify(pLoop, DT);
 
-    InstrumentInnerLoop(pLoop, PDT);
+//    InstrumentInnerLoop(pLoop, PDT);
+    InstrumentInnerLoop(pLoop, NULL);
 
     return false;
 }
 
-//void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
-void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop) {
+void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
     set<BasicBlock *> setBlocksInLoop;
 
     for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {

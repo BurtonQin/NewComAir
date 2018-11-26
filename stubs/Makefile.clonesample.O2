@@ -1,0 +1,38 @@
+CXX=clang
+CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
+OP_CFLAGS=-O2 -Xclang -disable-O0-optnone -g -flto
+LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
+
+TARGET=target.clonesample
+
+HOME_DIR=/home/boqin/Projects/NewComAir/
+BUILD_DIR=${HOME_DIR}/cmake-build-debug/
+LIB_DIR=${BUILD_DIR}/lib/
+RUNTIME_DIR=${BUILD_DIR}/runtime/
+ID_PASS=${LIB_DIR}/IDAssigner/libIDAssignerPass.so
+LOOP_ARRAY_LIST_SAMPLE_PASS=${LIB_DIR}/LoopSampler/Instrumentor/libArrayListSampleInstrumentPass.so
+COMMON_LIB=${LIB_DIR}/Common/libCommonLib.a
+RUNTIME_LIB=${RUNTIME_DIR}/Random/libRandomLib.a
+SRC_FILE=${HOME_DIR}/stubs/Telnet.c
+
+all: ${TARGET}
+
+${TARGET}: target.lalls.bc
+	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.lalls.bc -l${RUNTIME_LIB} -lm -o ${TARGET}
+
+target.lalls.bc: target.bc.id
+	opt -load ${LOOP_ARRAY_LIST_SAMPLE_PASS} -array-list-sample-instrument \
+	 -noLine 103 -strFile ${SRC_FILE} \
+	 -strFunc indexOf target.bc.id > target.lalls.bc
+
+target.bc.id: target.ls.bc
+	opt -load ${ID_PASS} -tag-id target.ls.bc > target.bc.id
+
+target.ls.bc: target.bc
+	opt -loop-simplify target.bc > target.ls.bc
+
+target.bc: ${SRC_FILE}
+	${CXX} ${CFLAGS} ${SRC_FILE} -c -o target.bc
+
+clean:
+	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id target.aprof *.ll *.aprof *.inline *.txt *.lalls
