@@ -35,6 +35,7 @@ struct ArrayListSampleInstrument : public ModulePass {
 
     void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap);
 
+    // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
     /* Module */
@@ -52,7 +53,7 @@ struct ArrayListSampleInstrument : public ModulePass {
     /* Global Variable */
 //    GlobalVariable *numCost;
 //    AllocaInst *itNum;
-    GlobalVariable *Switcher;
+    GlobalVariable *numGlobalCounter;
     GlobalVariable *GeoRate;
     /* ***** */
 
@@ -71,6 +72,7 @@ struct ArrayListSampleInstrument : public ModulePass {
 //    ConstantInt *ConstantLong0;
 //    ConstantInt *ConstantLong1;
     ConstantInt *ConstantInt0;
+    ConstantInt *ConstantIntN1;
 //    ConstantInt *ConstantInt1;
     ConstantInt *ConstantSamplingRate;
     /* ********** */

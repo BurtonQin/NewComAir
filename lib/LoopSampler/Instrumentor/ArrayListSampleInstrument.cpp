@@ -82,6 +82,7 @@ void ArrayListSampleInstrument::SetupConstants() {
 
     // int
     this->ConstantInt0 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("0"), 10));
+    this->ConstantIntN1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("-1"), 10));
 //    this->ConstantInt1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("1"), 10));
     this->ConstantSamplingRate = ConstantInt::get(pModule->getContext(),
                                                   APInt(32, StringRef(std::to_string(SamplingRate)), 10));
@@ -93,12 +94,13 @@ void ArrayListSampleInstrument::SetupGlobals() {
 //    this->numCost->setAlignment(8);
 //    this->numCost->setInitializer(this->ConstantLong0);
 
-    assert(pModule->getGlobalVariable("Switcher") == NULL);
-    this->Switcher = new GlobalVariable(*pModule, this->IntType,
+    assert(pModule->getGlobalVariable("numGlobalCounter") == NULL);
+    this->numGlobalCounter = new GlobalVariable(*pModule, this->IntType,
                                         false, GlobalValue::ExternalLinkage,
-                                        0, "Switcher");
-    this->Switcher->setAlignment(4);
-    this->Switcher->setInitializer(this->ConstantInt0);
+                                        0, "numGlobalCounter");
+
+    this->numGlobalCounter->setAlignment(4);
+    this->numGlobalCounter->setInitializer(this->ConstantInt0);
 
     assert(pModule->getGlobalVariable("GeoRate") == NULL);
     this->GeoRate = new GlobalVariable(*pModule, this->IntType,
@@ -244,47 +246,137 @@ void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDomina
 }
 
 void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded) {
+    /*
+    if (counter == 0) {            // condition1
+        counter--;                 // ifBody
+        while (0) {;}              //   cloneBody (to be instrumented)
+    } else if (counter == -1) {    // condition2
+        counter = gen_random();    // elseIfBody
+        while (0) {;}              //   cloneBody (to be instrumented)
+    } else {
+        counter--;                 // elseBody
+        while (0) {;}              //   header (original code, no instrumented)
+    }
+     */
+
     BasicBlock *pCondition1 = NULL;
+    BasicBlock *pCondition2 = NULL;
+
+    BasicBlock *pIfBody = NULL;
+    BasicBlock *pElseIfBody = NULL;
     BasicBlock *pElseBody = NULL;
-    BranchInst *pBranch = NULL;
+    BasicBlock *pClonedBody = NULL;
+
     LoadInst *pLoad1 = NULL;
     LoadInst *pLoad2 = NULL;
     ICmpInst *pCmp = NULL;
 
+    BinaryOperator *pBinary = NULL;
     TerminatorInst *pTerminator = NULL;
+    BranchInst *pBranch = NULL;
+    StoreInst *pStore = NULL;
     CallInst *pCall = NULL;
-    AttributeList emptyList;
+    AttributeList emptySet;
 
     Function *pInnerFunction = pInnerLoop->getHeader()->getParent();
-
     Module *pModule = pInnerFunction->getParent();
 
     pCondition1 = pInnerLoop->getLoopPreheader();
     BasicBlock *pHeader = pInnerLoop->getHeader();
 
-    BasicBlock *label_geo = BasicBlock::Create(pModule->getContext(), "label.geo", pInnerFunction, 0);
-    pElseBody = BasicBlock::Create(pModule->getContext(), ".else.body.aprof", pInnerFunction, 0);
+    pIfBody = BasicBlock::Create(pModule->getContext(), ".if.body.CPI", pInnerFunction, 0);
+
+    pCondition2 = BasicBlock::Create(pModule->getContext(), ".if2.CPI", pInnerFunction, 0);
+    pElseIfBody = BasicBlock::Create(pModule->getContext(), ".else.if.body.CPI", pInnerFunction, 0);
+    // Contains original code, thus no CPI
+    pElseBody = BasicBlock::Create(pModule->getContext(), ".else.body", pInnerFunction, 0);
+    // Cloned code, added to ifBody and elseIfBody
+    pClonedBody = BasicBlock::Create(pModule->getContext(), ".cloned.body.CPI", pInnerFunction, 0);
 
     pTerminator = pCondition1->getTerminator();
 
-    //condition2
-    pLoad2 = new LoadInst(this->Switcher, "", false, 4, pTerminator);
-    pCmp = new ICmpInst(pTerminator, ICmpInst::ICMP_SLE, pLoad2, this->ConstantInt0, "cmp1");
-    pBranch = BranchInst::Create(label_geo, pHeader, pCmp);
-    ReplaceInstWithInst(pTerminator, pBranch);
+    /*
+     * Append to condition1:
+     *  if (counter == 0) {
+     *    goto ifBody;
+     *  } else {
+     *    goto condition2;
+     *  }
+     */
+    {
+        pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pTerminator);
+        pLoad1->setAlignment(4);
+        pCmp = new ICmpInst(pTerminator, ICmpInst::ICMP_EQ, pLoad1, this->ConstantInt0, "cmp0");
+        pBranch = BranchInst::Create(pIfBody, pCondition2, pCmp);
+        ReplaceInstWithInst(pTerminator, pBranch);
+    }
 
-    // Block if.then5 (label_if_then5)
-    pLoad1 = new LoadInst(this->GeoRate, "", false, 4, label_geo);
-    pCall = CallInst::Create(this->aprof_geo, pLoad1, "", label_geo);
-    pCall->setCallingConv(CallingConv::C);
-    pCall->setTailCall(false);
-    pCall->setAttributes(emptyList);
-    new StoreInst(pCall, this->Switcher, false, 4, label_geo);
-    BranchInst::Create(pElseBody, label_geo);
+    /*
+     * Append to ifBody
+     *  counter--;  // counter-- -> counter += -1
+     *  goto clonedBody;
+     */
+    {
+        pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pIfBody);
+        pLoad1->setAlignment(4);
+        pBinary = BinaryOperator::Create(Instruction::Add, pLoad1, this->ConstantIntN1, "dec1_0", pIfBody);
+        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pLoad1);
+        pStore->setAlignment(4);
+        BranchInst::Create(pClonedBody, pIfBody);
+    }
 
+    /*
+     * Append to condition2
+     *  if (counter == -1) {
+     *    goto elseIfBody;
+     *  } else {
+     *    goto elseBody;
+     *  }
+     */
+    {
+        pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pCondition2);
+        pLoad1->setAlignment(4);
+        pCmp = new ICmpInst(pTerminator, ICmpInst::ICMP_EQ, pLoad1, this->ConstantIntN1, "cmpN1");
+        BranchInst::Create(pIfBody, pElseBody, pCmp, pCondition2);
+    }
+
+    /*
+     * Append to elseIfBody
+     *  counter = gen_random();
+     *  goto clonedBody;
+     */
+    {
+        pLoad2 = new LoadInst(this->GeoRate, "", false, 4, pElseIfBody);
+        pCall = CallInst::Create(this->aprof_geo, pLoad2, "", pElseIfBody);
+        pCall->setCallingConv(CallingConv::C);
+        pCall->setTailCall(false);
+        pCall->setAttributes(emptySet);
+        pStore = new StoreInst(pCall, this->numGlobalCounter, false, 4, pElseIfBody);
+        pStore->setAlignment(4);
+        BranchInst::Create(pClonedBody, pElseIfBody);
+    }
+
+    /*
+     * Append to elseBody
+     *  counter--;
+     *  goto header;
+     */
+    {
+        pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pElseBody);
+        pLoad1->setAlignment(4);
+        pBinary = BinaryOperator::Create(Instruction::Add, pLoad1, this->ConstantIntN1, "dec1_1", pElseBody);
+        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pLoad1);
+        pStore->setAlignment(4);
+        BranchInst::Create(pHeader, pElseBody);
+    }
+
+    // condition1: num 0
     vecAdded.push_back(pCondition1);
-    vecAdded.push_back(label_geo);
-    // num 2
+    vecAdded.push_back(pIfBody);
+    // cloneBody: num 2
+    vecAdded.push_back(pClonedBody);
+    vecAdded.push_back(pCondition2);
+    vecAdded.push_back(pElseIfBody);
     vecAdded.push_back(pElseBody);
 }
 
@@ -364,21 +456,20 @@ void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlo
         }
     }
 
-    //add to the else if body
+    //add to ifBody and elseIfBody
     BasicBlock *pCondition1 = vecAdd[0];
-    BasicBlock *pElseBody = vecAdd[2];
-//    BasicBlock *pElseBody = vecAdd[6];
+    BasicBlock *pClonedBody = vecAdd[2];
 
     BasicBlock *pClonedHeader = cast<BasicBlock>(VMap[pLoop->getHeader()]);
 
-    BranchInst::Create(pClonedHeader, pElseBody);
+    BranchInst::Create(pClonedHeader, pClonedBody);
 
     for (BasicBlock::iterator II = pClonedHeader->begin(); II != pClonedHeader->end(); II++) {
         if (PHINode *pPHI = dyn_cast<PHINode>(II)) {
-            vector<int> vecToRemoved;
+            // vector<int> vecToRemoved;
             for (unsigned i = 0, e = pPHI->getNumIncomingValues(); i != e; ++i) {
                 if (pPHI->getIncomingBlock(i) == pCondition1) {
-                    pPHI->setIncomingBlock(i, pElseBody);
+                    pPHI->setIncomingBlock(i, pClonedBody);
                 }
             }
         }
