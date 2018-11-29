@@ -312,7 +312,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     }
 
     /*
-     * Append to ifBody
+     * Append to ifBody:
      *  counter--;  // counter-- -> counter += -1
      *  goto clonedBody;
      */
@@ -326,7 +326,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     }
 
     /*
-     * Append to condition2
+     * Append to condition2:
      *  if (counter == -1) {
      *    goto elseIfBody;
      *  } else {
@@ -341,12 +341,13 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     }
 
     /*
-     * Append to elseIfBody
+     * Append to elseIfBody:
      *  counter = gen_random();
      *  goto clonedBody;
      */
     {
         pLoad2 = new LoadInst(this->GeoRate, "", false, 4, pElseIfBody);
+        pLoad2->setAlignment(4);
         pCall = CallInst::Create(this->aprof_geo, pLoad2, "", pElseIfBody);
         pCall->setCallingConv(CallingConv::C);
         pCall->setTailCall(false);
@@ -357,7 +358,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     }
 
     /*
-     * Append to elseBody
+     * Append to elseBody:
      *  counter--;
      *  goto header;
      */

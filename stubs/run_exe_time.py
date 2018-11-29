@@ -194,9 +194,6 @@ if __name__ == '__main__':
 	#run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
 	#run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
 
-	#run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
-	#run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
-	
 	run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
 	run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
 
