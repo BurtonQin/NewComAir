@@ -320,7 +320,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
         pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pIfBody);
         pLoad1->setAlignment(4);
         pBinary = BinaryOperator::Create(Instruction::Add, pLoad1, this->ConstantIntN1, "dec1_0", pIfBody);
-        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pLoad1);
+        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pIfBody);
         pStore->setAlignment(4);
         BranchInst::Create(pClonedBody, pIfBody);
     }
@@ -336,8 +336,8 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     {
         pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pCondition2);
         pLoad1->setAlignment(4);
-        pCmp = new ICmpInst(pTerminator, ICmpInst::ICMP_EQ, pLoad1, this->ConstantIntN1, "cmpN1");
-        BranchInst::Create(pIfBody, pElseBody, pCmp, pCondition2);
+        pCmp = new ICmpInst(*pCondition2, ICmpInst::ICMP_EQ, pLoad1, this->ConstantIntN1, "cmpN1");
+        BranchInst::Create(pElseIfBody, pElseBody, pCmp, pCondition2);
     }
 
     /*
@@ -365,7 +365,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
         pLoad1 = new LoadInst(this->numGlobalCounter, "", false, pElseBody);
         pLoad1->setAlignment(4);
         pBinary = BinaryOperator::Create(Instruction::Add, pLoad1, this->ConstantIntN1, "dec1_1", pElseBody);
-        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pLoad1);
+        pStore = new StoreInst(pBinary, this->numGlobalCounter, false, pElseBody);
         pStore->setAlignment(4);
         BranchInst::Create(pHeader, pElseBody);
     }
