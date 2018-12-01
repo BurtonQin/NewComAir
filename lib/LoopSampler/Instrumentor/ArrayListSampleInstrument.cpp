@@ -67,7 +67,7 @@ ArrayListSampleInstrument::ArrayListSampleInstrument() : ModulePass(ID) {
 
 void ArrayListSampleInstrument::SetupTypes() {
 
-//    this->VoidType = Type::getVoidTy(pModule->getContext());
+    this->VoidType = Type::getVoidTy(pModule->getContext());
 //    this->LongType = IntegerType::get(pModule->getContext(), 64);
     this->IntType = IntegerType::get(pModule->getContext(), 32);
 //    this->VoidPointerType = PointerType::get(IntegerType::get(pModule->getContext(), 8), 0);
@@ -151,17 +151,81 @@ void ArrayListSampleInstrument::SetupFunctions() {
 //        ArgTypes.clear();
 //    }
 
-    this->aprof_geo = this->pModule->getFunction("aprof_geo");
-    if (!this->aprof_geo) {
-        // aprof_geo
+    // geo
+    this->geo = this->pModule->getFunction("geo");
+    if (!this->geo) {
         ArgTypes.push_back(this->IntType);
-        FunctionType *AprofGeoType = FunctionType::get(this->IntType, ArgTypes, false);
-        this->aprof_geo = Function::Create
-                (AprofGeoType, GlobalValue::ExternalLinkage, "aprof_geo", this->pModule);
-        this->aprof_geo->setCallingConv(CallingConv::C);
+        FunctionType *Geo_FuncTy = FunctionType::get(this->IntType, ArgTypes, false);
+        this->geo = Function::Create(Geo_FuncTy, GlobalValue::ExternalLinkage, "geo", this->pModule);
+        this->geo->setCallingConv(CallingConv::C);
         ArgTypes.clear();
     }
 
+    // InitMemHooks
+    this->InitMemHooks = this->pModule->getFunction("InitMemHooks");
+    if (!this->InitMemHooks) {
+        FunctionType *InitMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
+        this->InitMemHooks = Function::Create(InitMemHooks_FuncTy, GlobalValue::ExternalLinkage, "InitMemHooks", this->pModule);
+        this->InitMemHooks->setCallingConv(CallingConv::C);
+        ArgTypes.clear();
+    }
+
+    // FinalizeMemHooks
+    this->FinalizeMemHooks = this->pModule->getFunction("FinalizeMemHooks");
+    if (!this->FinalizeMemHooks) {
+        FunctionType *FinalizeMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
+        this->FinalizeMemHooks = Function::Create(FinalizeMemHooks_FuncTy, GlobalValue::ExternalLinkage, "FinalizeMemHooks", this->pModule);
+        this->FinalizeMemHooks->setCallingConv(CallingConv::C);
+    }
+
+}
+
+void ArrayListSampleInstrument::InstrumentMain() {
+    AttributeList emptyList;
+    CallInst *pCall;
+
+    Function *pFunctionMain = this->pModule->getFunction("main");
+
+    if (!pFunctionMain) {
+        errs() << "Cannot find the main function\n";
+        return;
+    }
+
+    // Instrument InitMemHooks before FirstNonPHI of main function.
+    Instruction *firstInst = pFunctionMain->getEntryBlock().getFirstNonPHI();
+
+    pCall = CallInst::Create(this->InitMemHooks, "", firstInst);
+    pCall->setCallingConv(CallingConv::C);
+    pCall->setTailCall(false);
+    pCall->setAttributes(emptyList);
+
+    for (Function::iterator BB = pFunctionMain->begin(); BB != pFunctionMain->end(); BB++) {
+        for (BasicBlock::iterator II = BB->begin(); II != BB->end(); II++) {
+
+            // Instrument FinalizeMemHooks before return.
+            if (ReturnInst *pRet = dyn_cast<ReturnInst>(II)) {
+                pCall = CallInst::Create(this->FinalizeMemHooks, "", pRet);
+                pCall->setCallingConv(CallingConv::C);
+                pCall->setTailCall(false);
+                pCall->setAttributes(emptyList);
+
+            } else if (isa<CallInst>(II) || isa<InvokeInst>(II)) {
+                CallSite cs(&*II);
+                Function *pCalled = cs.getCalledFunction();
+                if (!pCalled) {
+                    continue;
+                }
+                // Instrument FinalizeMemHooks before calling exit or functions similar to exit.
+                // TODO: any other functions similar to exit?
+                if (pCalled->getName() == "exit" || pCalled->getName() == "_ZL9mysql_endi") {
+                    pCall = CallInst::Create(this->FinalizeMemHooks, "", &*II);
+                    pCall->setCallingConv(CallingConv::C);
+                    pCall->setTailCall(false);
+                    pCall->setAttributes(emptyList);
+                }
+            }
+        }
+    }
 }
 
 void ArrayListSampleInstrument::SetupInit(Module &M) {
@@ -180,7 +244,7 @@ bool ArrayListSampleInstrument::runOnModule(Module &M) {
 
     Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
 
-    if (pFunction == NULL) {
+    if (!pFunction) {
         errs() << "Cannot find the input function\n";
         return false;
     }
@@ -194,6 +258,9 @@ bool ArrayListSampleInstrument::runOnModule(Module &M) {
 //    LoopSimplify(pLoop, DT);
 
 //    InstrumentInnerLoop(pLoop, PDT);
+
+    InstrumentMain();
+
     InstrumentInnerLoop(pLoop, NULL);
 
     return false;
@@ -348,7 +415,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     {
         pLoad2 = new LoadInst(this->GeoRate, "", false, 4, pElseIfBody);
         pLoad2->setAlignment(4);
-        pCall = CallInst::Create(this->aprof_geo, pLoad2, "", pElseIfBody);
+        pCall = CallInst::Create(this->geo, pLoad2, "", pElseIfBody);
         pCall->setCallingConv(CallingConv::C);
         pCall->setTailCall(false);
         pCall->setAttributes(emptySet);

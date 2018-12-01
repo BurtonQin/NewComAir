@@ -12,13 +12,14 @@ RUNTIME_DIR=${BUILD_DIR}/runtime/
 ID_PASS=${LIB_DIR}/IDAssigner/libIDAssignerPass.so
 LOOP_ARRAY_LIST_SAMPLE_PASS=${LIB_DIR}/LoopSampler/Instrumentor/libArrayListSampleInstrumentPass.so
 COMMON_LIB=${LIB_DIR}/Common/libCommonLib.a
-RUNTIME_LIB=${RUNTIME_DIR}/Random/libRandomLib.a
+RUNTIME_RANDOM_LIB=${RUNTIME_DIR}/Random/libRandomLib.a
+RUNTIME_SHMEM_LIB=${RUNTIME_DIR}/Shmem/libShmemLib.a
 SRC_FILE=${HOME_DIR}/stubs/Telnet.c
 
 all: ${TARGET}
 
 ${TARGET}: target.lalls.bc
-	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.lalls.bc -l${RUNTIME_LIB} -lm -o ${TARGET}
+	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.lalls.bc -l${RUNTIME_RANDOM_LIB} -l${RUNTIME_SHMEM_LIB} -lm -lrt -o ${TARGET}
 
 target.lalls.bc: target.bc.id
 	opt -load ${LOOP_ARRAY_LIST_SAMPLE_PASS} -array-list-sample-instrument \

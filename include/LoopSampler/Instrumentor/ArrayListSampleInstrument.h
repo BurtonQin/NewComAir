@@ -19,6 +19,8 @@ struct ArrayListSampleInstrument : public ModulePass {
 
     virtual bool runOnModule(Module &M);
 
+private:
+
     void SetupInit(Module &M);
 
     void SetupTypes();
@@ -38,12 +40,14 @@ struct ArrayListSampleInstrument : public ModulePass {
     // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
+    void InstrumentMain();
+
     /* Module */
     Module *pModule;
     /* ********** */
 
     /* Type */
-//    Type *VoidType;
+    Type *VoidType;
 //    IntegerType *LongType;
     IntegerType *IntType;
 //    PointerType *VoidPointerType;
@@ -65,7 +69,12 @@ struct ArrayListSampleInstrument : public ModulePass {
 //    // void aprof_return(unsigned long numCost,  unsigned long itNum)
 //    Function *aprof_return;
 
-    Function *aprof_geo;
+    Function *geo;
+
+    Function *InitMemHooks;
+
+    Function *FinalizeMemHooks;
+
     /* ********** */
 
     /* Constant */

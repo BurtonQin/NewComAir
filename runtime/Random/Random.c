@@ -1,93 +1,15 @@
+//
+// Random generator
+//
+
 #include "Random.h"
 
-//// page table
-//
-//struct log_address store_stack[1];
-//
-//// share memory
-//int fd;
-//void *pcBuffer = NULL;
-//unsigned int store_size = sizeof(struct log_address);
-//
-//int record_log = 0;
-//
+#include <math.h>
+
 // sampling
 static int old_value = -1;
-//
-//// aprof api
-//
-//void aprof_init() {
-//
-//    // init share memory
-//    fd = shm_open(APROF_MEM_LOG, O_RDWR | O_CREAT | O_EXCL, 0777);
-//
-//    if (fd < 0) {
-//        fd = shm_open(APROF_MEM_LOG, O_RDWR, 0777);
-//
-//    } else
-//        ftruncate(fd, BUFFERSIZE);
-//
-//    pcBuffer = (void *) mmap(0, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-//
-//}
-//
-//void aprof_read(void *memory_addr, unsigned long length) {
-//    unsigned long start_addr = (unsigned long) memory_addr;
-//    if (record_log == 0) {
-//        if (store_stack[0].start_addr != start_addr || store_stack[0].length != length) {
-//            store_stack[0].flag = 'r';
-//            store_stack[0].start_addr = start_addr;
-//            store_stack[0].length = length;
-//            memcpy(pcBuffer, &(store_stack), store_size);
-//            pcBuffer += store_size;
-//        }
-//
-//    } else {
-//
-//        store_stack[0].flag = 'r';
-//        store_stack[0].start_addr = start_addr;
-//        store_stack[0].length = length;
-//        memcpy(pcBuffer, &(store_stack), store_size);
-//        pcBuffer += store_size;
-//        record_log = 0;
-//    }
-//
-//}
-//
-//
-//void aprof_return(unsigned long numCost, int sample) {
-//    if (record_log == 0) {
-//        store_stack[0].flag = 'e';
-//        store_stack[0].start_addr = sample;
-//        // carefull !!!
-//        store_stack[0].length = numCost;
-//        memcpy(pcBuffer, &(store_stack), store_size);
-//        pcBuffer += store_size;
-//        record_log = 1;
-//    }
-//}
-//
-//void aprof_loop_in(int funcId, int loopId) {
-//    store_stack[0].flag = 'i';
-//    store_stack[0].start_addr = funcId;
-//    // carefull !!!
-//    store_stack[0].length = loopId;
-//    memcpy(pcBuffer, &(store_stack), store_size);
-//    pcBuffer += store_size;
-//}
-//
-//
-//void aprof_loop_out(int funcId, int loopId) {
-//    store_stack[0].flag = 'x';
-//    store_stack[0].start_addr = funcId;
-//    // carefull !!!
-//    store_stack[0].length = loopId;
-//    memcpy(pcBuffer, &(store_stack), store_size);
-//    pcBuffer += store_size;
-//}
 
-
-static double aprof_rand_val(int seed) {
+static double rand_val(int seed) {
     const long a = 16807;  // Multiplier
     const long m = 2147483647;  // Modulus
     const long q = 127773;  // m div a
@@ -117,7 +39,7 @@ static double aprof_rand_val(int seed) {
 }
 
 
-int aprof_geo(int iRate) {
+int geo(int iRate) {
     double p = 1 / (double) iRate;
     double z;                     // Uniform random number (0 < z < 1)
     double geo_value;             // Computed geometric value to be returned
@@ -125,7 +47,7 @@ int aprof_geo(int iRate) {
     do {
         // Pull a uniform random number (0 < z < 1)
         do {
-            z = aprof_rand_val(0);
+            z = rand_val(0);
         } while ((z == 0) || (z == 1));
 
         // Compute geometric random variable using inversion method

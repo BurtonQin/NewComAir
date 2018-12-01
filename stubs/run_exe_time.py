@@ -174,7 +174,6 @@ def plot_multi(result, result1, result2, result3,  picture):
     fig.savefig(picture, dpi=300)
     plt.show()
 
-
 if __name__ == '__main__':
 	target_O0_dir = './targets.O0/'
 	target_O2_dir = './targets.O2/'
@@ -184,19 +183,23 @@ if __name__ == '__main__':
 
 	nopass = 'target'
 	original = 'target.lalls'
-	clonesample = 'target.clonesample2'
-	# clonesample in O0
-	#clonesampleO0 = 'target.clonesample.O0'
+	clonesample = 'target.clonesample'
+	clonesample2 = 'target.clonesample2'
+	openshmem = 'target.openshmem'
 
-	#run_time_command(target_O0_dir + nopass, result_O0_dir + nopass + '.csv')	
-	#run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
+	run_time_command(target_O0_dir + nopass, result_O0_dir + nopass + '.csv')	
+	run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
 
-	#run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
-	#run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
+	run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
+	run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
 
 	run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
 	run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
 
-	#run_time_command(target_O0_dir + clonesampleO0, result_O0_dir + clonesampleO0 + '.csv')
+	run_time_command(target_O0_dir + clonesample2, result_O0_dir + clonesample2 + '.csv')
+	run_time_command(target_O2_dir + clonesample2, result_O2_dir + clonesample2 + '.csv')
+
+	run_time_command(target_O0_dir + openshmem, result_O0_dir + openshmem + '.csv')
+	run_time_command(target_O2_dir + openshmem, result_O2_dir + openshmem + '.csv')
 
 	#plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')
