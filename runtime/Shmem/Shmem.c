@@ -57,3 +57,36 @@ void FinalizeMemHooks() {
     }
     close(fd);
 }
+
+/**
+ * Write the begin address and length of the accessed memory to shared memory buffer.
+ * @param beginAddress the begin address of the accessed memory
+ * @param length the length of the accessed memory
+ */
+void RecordMemHooks(void *beginAddress, unsigned long length) {
+    unsigned long beginNum = (unsigned long)beginAddress;
+
+//    static unsigned long lastBeginNum = 0;
+//    static unsigned long lastLength = 0;
+//
+//    if (lastLength == length) {
+//        return;
+//    }
+//
+//    pcBuffer[iBufferIndex++] = lastBeginNum = beginNum;
+//    pcBuffer[iBufferIndex++] = lastLength = length;
+//
+    pcBuffer[iBufferIndex++] = beginNum;
+    pcBuffer[iBufferIndex++] = length;
+}
+
+/**
+ * Write the exec times of the cloned Loop to shared memory buffer.
+ * @param cost the exec times of the cloned Loop
+ *
+ * The first element is set to zero to distinguish from the RecordMemHook output.
+ */
+void RecordCostHooks(unsigned long cost) {
+    pcBuffer[iBufferIndex++] = 0UL;
+    pcBuffer[iBufferIndex++] = cost;
+}

@@ -13,4 +13,20 @@ void InitMemHooks();
  */
 void FinalizeMemHooks();
 
+/**
+ * Write the begin address and length of the accessed memory to shared memory buffer.
+ * @param beginAddress the begin address of the accessed memory
+ * @param length the length of the accessed memory
+ */
+void RecordMemHooks(void *beginAddress, unsigned long length);
+
+/**
+ * Write the exec times of the cloned Loop to shared memory buffer.
+ * @param cost the exec times of the cloned Loop
+ *
+ * The first element is set to zero to distinguish from the RecordMemHook output.
+ */
+void RecordCostHooks(unsigned long cost);
+
+
 #endif //NEWCOMAIR_SHMEM_H

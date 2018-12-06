@@ -39,7 +39,7 @@ def run_time_command(target, result):
 	exe_times = []
 	#for i in range(5000, 55000, 5000):
 	#for i in range(5000, 55000, 1000):
-	for x in range(20):
+	for x in range(1):
 		i = 54000
 		file_name = generate_input(i)
 		command = [target, ' ', file_name, ' ', CONSTANT_SONG]
@@ -187,19 +187,19 @@ if __name__ == '__main__':
 	clonesample2 = 'target.clonesample2'
 	openshmem = 'target.openshmem'
 
-	run_time_command(target_O0_dir + nopass, result_O0_dir + nopass + '.csv')	
-	run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
-
-	run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
+#	run_time_command(target_O0_dir + nopass, result_O0_dir + nopass + '.csv')	
+#	run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
+#
+#	run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
 	run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
-
-	run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
+#
+#	run_time_command(target_O0_dir + clonesample, result_O0_dir + clonesample + '.csv')
 	run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
-
-	run_time_command(target_O0_dir + clonesample2, result_O0_dir + clonesample2 + '.csv')
-	run_time_command(target_O2_dir + clonesample2, result_O2_dir + clonesample2 + '.csv')
-
-	run_time_command(target_O0_dir + openshmem, result_O0_dir + openshmem + '.csv')
-	run_time_command(target_O2_dir + openshmem, result_O2_dir + openshmem + '.csv')
+#
+#	run_time_command(target_O0_dir + clonesample2, result_O0_dir + clonesample2 + '.csv')
+#	run_time_command(target_O2_dir + clonesample2, result_O2_dir + clonesample2 + '.csv')
+#
+	#run_time_command(target_O0_dir + openshmem, result_O0_dir + openshmem + '.csv')
+	#run_time_command(target_O2_dir + openshmem, result_O2_dir + openshmem + '.csv')
 
 	#plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')

@@ -68,17 +68,17 @@ ArrayListSampleInstrument::ArrayListSampleInstrument() : ModulePass(ID) {
 void ArrayListSampleInstrument::SetupTypes() {
 
     this->VoidType = Type::getVoidTy(pModule->getContext());
-//    this->LongType = IntegerType::get(pModule->getContext(), 64);
+    this->LongType = IntegerType::get(pModule->getContext(), 64);
     this->IntType = IntegerType::get(pModule->getContext(), 32);
-//    this->VoidPointerType = PointerType::get(IntegerType::get(pModule->getContext(), 8), 0);
+    this->VoidPointerType = PointerType::get(IntegerType::get(pModule->getContext(), 8), 0);
 
 }
 
 void ArrayListSampleInstrument::SetupConstants() {
 
 //    // long
-//    this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
-//    this->ConstantLong1 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("1"), 10));
+    this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
+    this->ConstantLong1 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("1"), 10));
 
     // int
     this->ConstantInt0 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("0"), 10));
@@ -89,10 +89,13 @@ void ArrayListSampleInstrument::SetupConstants() {
 }
 
 void ArrayListSampleInstrument::SetupGlobals() {
-////    assert(pModule->getGlobalVariable("numCost") == NULL);
-//    this->numCost = new GlobalVariable(*pModule, this->LongType, false, GlobalValue::ExternalLinkage, 0, "numCost");
-//    this->numCost->setAlignment(8);
-//    this->numCost->setInitializer(this->ConstantLong0);
+
+    assert(pModule->getGlobalVariable("numGlobalCost") == NULL);
+    this->numGlobalCost = new GlobalVariable(*pModule, this->LongType,
+                                            false, GlobalValue::ExternalLinkage,
+                                            0, "numGlobalCost");
+    this->numGlobalCost->setAlignment(8);
+    this->numGlobalCost->setInitializer(this->ConstantLong0);
 
     assert(pModule->getGlobalVariable("numGlobalCounter") == NULL);
     this->numGlobalCounter = new GlobalVariable(*pModule, this->IntType,
@@ -176,8 +179,19 @@ void ArrayListSampleInstrument::SetupFunctions() {
         FunctionType *FinalizeMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
         this->FinalizeMemHooks = Function::Create(FinalizeMemHooks_FuncTy, GlobalValue::ExternalLinkage, "FinalizeMemHooks", this->pModule);
         this->FinalizeMemHooks->setCallingConv(CallingConv::C);
+        ArgTypes.clear();
     }
 
+    // RecordMemHooks
+    this->RecordMemHooks = this->pModule->getFunction("RecordMemHooks");
+    if (!this->RecordMemHooks) {
+        ArgTypes.push_back(this->VoidPointerType);
+        ArgTypes.push_back(this->LongType);
+        FunctionType *RecordMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
+        this->RecordMemHooks = Function::Create(RecordMemHooks_FuncTy, GlobalValue::ExternalLinkage, "RecordMemHooks", this->pModule);
+        this->RecordMemHooks->setCallingConv(CallingConv::C);
+        ArgTypes.clear();
+    }
 }
 
 void ArrayListSampleInstrument::InstrumentMain() {
@@ -267,11 +281,11 @@ bool ArrayListSampleInstrument::runOnModule(Module &M) {
 }
 
 void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
-    set<BasicBlock *> setBlocksInLoop;
-
-    for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
-        setBlocksInLoop.insert(*BB);
-    }
+//    set<BasicBlock *> setBlocksInLoop;
+//
+//    for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
+//        setBlocksInLoop.insert(*BB);
+//    }
 
 //    InstrumentCostUpdater(pInnerLoop);
 
@@ -285,7 +299,11 @@ void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDomina
 
     //clone loop
     ValueToValueMapTy VMap;
-    CloneInnerLoop(pInnerLoop, vecAdd, VMap);
+    vector<BasicBlock *> vecCloned;
+    CloneInnerLoop(pInnerLoop, vecAdd, VMap, vecCloned);
+
+    //instrument RecordMemHooks to clone loop
+    InstrumentRecordMemHooks(vecCloned);
 
 //    Function *pFunc = pInnerLoop->getHeader()->getParent();
 
@@ -336,6 +354,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
 
     LoadInst *pLoad1 = NULL;
     LoadInst *pLoad2 = NULL;
+    LoadInst *pLoad3 = NULL;
     ICmpInst *pCmp = NULL;
 
     BinaryOperator *pBinary = NULL;
@@ -354,6 +373,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     pIfBody = BasicBlock::Create(pModule->getContext(), ".if.body.CPI", pInnerFunction, 0);
 
     pCondition2 = BasicBlock::Create(pModule->getContext(), ".if2.CPI", pInnerFunction, 0);
+
     pElseIfBody = BasicBlock::Create(pModule->getContext(), ".else.if.body.CPI", pInnerFunction, 0);
     // Contains original code, thus no CPI
     pElseBody = BasicBlock::Create(pModule->getContext(), ".else.body", pInnerFunction, 0);
@@ -438,6 +458,18 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
         BranchInst::Create(pHeader, pElseBody);
     }
 
+    /*
+     * Insert at the beginning of clonedBody:
+     * cost++;
+     */
+//    {
+//        pLoad3 = new LoadInst(this->numGlobalCost, "", false, pClonedBody);
+//        pLoad3->setAlignment(8);
+//        pBinary = BinaryOperator::Create(Instruction::Add, pLoad3, this->ConstantLong1, "inc1", pClonedBody);
+//        pStore = new StoreInst(pBinary, this->numGlobalCost, false, pClonedBody);
+//        pStore->setAlignment(8);
+//    }
+
     // condition1: num 0
     vecAdded.push_back(pCondition1);
     vecAdded.push_back(pIfBody);
@@ -448,17 +480,17 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     vecAdded.push_back(pElseBody);
 }
 
-void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap) {
+void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap, std::vector<BasicBlock *> &vecCloned) {
     Function *pFunction = pLoop->getHeader()->getParent();
 
     SmallVector<BasicBlock *, 4> ExitBlocks;
     pLoop->getExitBlocks(ExitBlocks);
 
-    set<BasicBlock *> setExitBlocks;
-
-    for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
-        setExitBlocks.insert(ExitBlocks[i]);
-    }
+//    set<BasicBlock *> setExitBlocks;
+//
+//    for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
+//        setExitBlocks.insert(ExitBlocks[i]);
+//    }
 
     for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
         VMap[ExitBlocks[i]] = ExitBlocks[i];
@@ -487,6 +519,8 @@ void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlo
 
         if (pCurrent->hasName()) {
             NewBB->setName(pCurrent->getName() + ".CPI");
+            // add to vecCloned
+            vecCloned.push_back(NewBB);
         }
 
         if (pCurrent->hasAddressTaken()) {
@@ -597,6 +631,68 @@ void ArrayListSampleInstrument::RemapInstruction(Instruction *I, ValueToValueMap
             ValueToValueMapTy::iterator It = VMap.find(PN->getIncomingBlock(i));
             if (It != VMap.end())
                 PN->setIncomingBlock(i, cast<BasicBlock>(It->second));
+        }
+    }
+}
+
+void ArrayListSampleInstrument::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned) {
+
+    for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
+
+        BasicBlock *pBB = *BB;
+
+        for (BasicBlock::iterator II = pBB->begin(); II != pBB->end(); II++) {
+            Instruction *pInst = &*II;
+
+            if (pInst->getOpcode() == Instruction::Load) {
+
+                errs() << "Instruction:" << *pInst << '\n';
+
+                Value *var = pInst->getOperand(0);
+
+                if (!var) {
+                    errs() << "var: NULL" << '\n';
+                    continue;
+                }
+
+                errs() << "var:" << *var << '\n';
+
+                DataLayout *dl = new DataLayout(this->pModule);
+
+                Type *type_1 = var->getType()->getContainedType(0);
+
+                if (isa<FunctionType>(type_1)) {
+                    errs() << "type_1: FunctionType" << '\n';
+                    continue;
+                }
+
+                errs() << "type_1:" << *type_1 << '\n';
+
+                if (type_1->isSized()) {
+                    CastInst *voidPtr = new BitCastInst(var, this->VoidPointerType, "", pInst);
+                    ConstantInt *varSize = ConstantInt::get(this->pModule->getContext(),
+                                                            APInt(64,
+                                                                  StringRef(
+                                                                          std::to_string(dl->getTypeAllocSize(type_1))),
+                                                                  10));
+
+                    std::vector<Value *> params;
+                    params.push_back(voidPtr);
+                    params.push_back(varSize);
+
+                    CallInst *pCall = CallInst::Create(this->RecordMemHooks, params, "", pInst);
+                    pCall->setCallingConv(CallingConv::C);
+                    pCall->setTailCall(false);
+                    AttributeList emptyList;
+                    pCall->setAttributes(emptyList);
+
+                } else {
+
+                    pInst->dump();
+                    type_1->dump();
+                    assert(false);
+                }
+            }
         }
     }
 }
