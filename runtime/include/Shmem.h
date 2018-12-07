@@ -1,7 +1,7 @@
 // shared memory hooks
 
-#ifndef NEWCOMAIR_SHMEM_H
-#define NEWCOMAIR_SHMEM_H
+#ifndef NEWCOMAIR_RUNTIME_SHMEM_H
+#define NEWCOMAIR_RUNTIME_SHMEM_H
 
 /**
  * Open a shared memory to store results, provide a ptr->buffer to operate on.
@@ -29,4 +29,4 @@ void RecordMemHooks(void *beginAddress, unsigned long length);
 void RecordCostHooks(unsigned long cost);
 
 
-#endif //NEWCOMAIR_SHMEM_H
+#endif //NEWCOMAIR_RUNTIME_SHMEM_H

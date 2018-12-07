@@ -19,14 +19,14 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "LoopSampler/Instrumentor/ArrayListSampleInstrument.h"
+#include "LoopSampler/Instrumentor/LoopInstrumentor.h"
 #include "Common/ArrayLinkedIndentifier.h"
 #include "Common/Constant.h"
 #include "Common/Loop.h"
 
 using namespace llvm;
 
-static RegisterPass<ArrayListSampleInstrument> X("array-list-sample-instrument",
+static RegisterPass<LoopInstrumentor> X("array-list-sample-instrument",
                                                  "instrument a loop accessing an array element in each iteration",
                                                  true, false);
 
@@ -47,9 +47,11 @@ static cl::opt<int> SamplingRate("sampleRate",
                                  cl::desc("The rate of sampling."),
                                  cl::init(100));
 
-char ArrayListSampleInstrument::ID = 0;
+static cl::opt<bool> bElseIf("elseIf", cl::desc("use if-elseif-else instead of if-else"), cl::Optional, cl::value_desc("bElseIf"));
 
-void ArrayListSampleInstrument::getAnalysisUsage(AnalysisUsage &AU) const {
+char LoopInstrumentor::ID = 0;
+
+void LoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
 //    AU.addRequired<PostDominatorTreeWrapperPass>();
 //    AU.addRequired<DominatorTreeWrapperPass>();
@@ -57,7 +59,7 @@ void ArrayListSampleInstrument::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<LoopInfoWrapperPass>();
 }
 
-ArrayListSampleInstrument::ArrayListSampleInstrument() : ModulePass(ID) {
+LoopInstrumentor::LoopInstrumentor() : ModulePass(ID) {
     PassRegistry &Registry = *PassRegistry::getPassRegistry();
 //    initializeScalarEvolutionWrapperPassPass(Registry);
     initializeLoopInfoWrapperPassPass(Registry);
@@ -65,7 +67,7 @@ ArrayListSampleInstrument::ArrayListSampleInstrument() : ModulePass(ID) {
 //    initializeDominatorTreeWrapperPassPass(Registry);
 }
 
-void ArrayListSampleInstrument::SetupTypes() {
+void LoopInstrumentor::SetupTypes() {
 
     this->VoidType = Type::getVoidTy(pModule->getContext());
     this->LongType = IntegerType::get(pModule->getContext(), 64);
@@ -74,7 +76,7 @@ void ArrayListSampleInstrument::SetupTypes() {
 
 }
 
-void ArrayListSampleInstrument::SetupConstants() {
+void LoopInstrumentor::SetupConstants() {
 
 //    // long
     this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
@@ -88,7 +90,7 @@ void ArrayListSampleInstrument::SetupConstants() {
                                                   APInt(32, StringRef(std::to_string(SamplingRate)), 10));
 }
 
-void ArrayListSampleInstrument::SetupGlobals() {
+void LoopInstrumentor::SetupGlobals() {
 
     assert(pModule->getGlobalVariable("numGlobalCost") == NULL);
     this->numGlobalCost = new GlobalVariable(*pModule, this->LongType,
@@ -114,7 +116,7 @@ void ArrayListSampleInstrument::SetupGlobals() {
 
 }
 
-void ArrayListSampleInstrument::SetupFunctions() {
+void LoopInstrumentor::SetupFunctions() {
 
     std::vector<Type *> ArgTypes;
 //
@@ -194,7 +196,7 @@ void ArrayListSampleInstrument::SetupFunctions() {
     }
 }
 
-void ArrayListSampleInstrument::InstrumentMain() {
+void LoopInstrumentor::InstrumentMain() {
     AttributeList emptyList;
     CallInst *pCall;
 
@@ -242,7 +244,7 @@ void ArrayListSampleInstrument::InstrumentMain() {
     }
 }
 
-void ArrayListSampleInstrument::SetupInit(Module &M) {
+void LoopInstrumentor::SetupInit(Module &M) {
     // all set up operation
     this->pModule = &M;
     SetupTypes();
@@ -252,7 +254,7 @@ void ArrayListSampleInstrument::SetupInit(Module &M) {
 }
 
 
-bool ArrayListSampleInstrument::runOnModule(Module &M) {
+bool LoopInstrumentor::runOnModule(Module &M) {
 
     SetupInit(M);
 
@@ -280,12 +282,18 @@ bool ArrayListSampleInstrument::runOnModule(Module &M) {
     return false;
 }
 
-void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
-//    set<BasicBlock *> setBlocksInLoop;
-//
-//    for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
-//        setBlocksInLoop.insert(*BB);
-//    }
+void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
+    set<BasicBlock *> setBlocksInLoop;
+
+    for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
+        setBlocksInLoop.insert(*BB);
+    }
+
+    ValueToValueMapTy VCalleeMap;
+    map<Function *, set<Instruction *> > FuncCallSiteMapping;
+
+    // add hooks to function called inside the loop
+    CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
 
 //    InstrumentCostUpdater(pInnerLoop);
 
@@ -330,7 +338,7 @@ void ArrayListSampleInstrument::InstrumentInnerLoop(Loop *pInnerLoop, PostDomina
 //    InstrumentReturn(pFunc);
 }
 
-void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded) {
+void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded) {
     /*
     if (counter == 0) {            // condition1
         counter--;                 // ifBody
@@ -480,7 +488,7 @@ void ArrayListSampleInstrument::CreateIfElseIfBlock(Loop *pInnerLoop, std::vecto
     vecAdded.push_back(pElseBody);
 }
 
-void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap, std::vector<BasicBlock *> &vecCloned) {
+void LoopInstrumentor::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap, std::vector<BasicBlock *> &vecCloned) {
     Function *pFunction = pLoop->getHeader()->getParent();
 
     SmallVector<BasicBlock *, 4> ExitBlocks;
@@ -617,7 +625,7 @@ void ArrayListSampleInstrument::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlo
     }
 }
 
-void ArrayListSampleInstrument::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap) {
+void LoopInstrumentor::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap) {
     for (unsigned op = 0, E = I->getNumOperands(); op != E; ++op) {
         Value *Op = I->getOperand(op);
         ValueToValueMapTy::iterator It = VMap.find(Op);
@@ -635,7 +643,7 @@ void ArrayListSampleInstrument::RemapInstruction(Instruction *I, ValueToValueMap
     }
 }
 
-void ArrayListSampleInstrument::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned) {
+void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned) {
 
     for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
 
@@ -696,6 +704,319 @@ void ArrayListSampleInstrument::InstrumentRecordMemHooks(std::vector<BasicBlock 
         }
     }
 }
+
+//void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap, map<Function *, set<Instruction *> > &FuncCallSiteMapping) {
+//
+//    vector<Function *> vecWorkList;
+//    set<Function *> toDo;
+//
+//    set<Instruction *> setMonitoredInstInCallee;
+//
+//    set<BasicBlock *>::iterator itBlockSetBegin = setBlocksInLoop.begin();
+//    set<BasicBlock *>::iterator itBlockSetEnd   = setBlocksInLoop.end();
+//
+//    for(; itBlockSetBegin != itBlockSetEnd; itBlockSetBegin ++)
+//    {
+//        BasicBlock * BB = * itBlockSetBegin;
+//
+//        if(isa<UnreachableInst>(BB->getTerminator()))
+//        {
+//            continue;
+//        }
+//
+//        for(BasicBlock::iterator II = (BB)->begin(); II != (BB)->end(); II ++ )
+//        {
+//            if(isa<DbgInfoIntrinsic>(II))
+//            {
+//                continue;
+//            }
+//            else if(isa<InvokeInst>(II) || isa<CallInst>(II))
+//            {
+//                CallSite cs(II);
+//                Function * pCalled = cs.getCalledFunction();
+//
+//                if(pCalled == NULL)
+//                {
+//                    continue;
+//                }
+//
+//                if(this->LibraryTypeMapping.find(pCalled) != this->LibraryTypeMapping.end())
+//                {
+//                    continue;
+//                }
+//
+//                if(pCalled->isDeclaration() )
+//                {
+//                    continue;
+//                }
+//
+//                FuncCallSiteMapping[pCalled].insert(II);
+//
+//                if(toDo.find(pCalled) == toDo.end() )
+//                {
+//                    toDo.insert(pCalled);
+//                    vecWorkList.push_back(pCalled);
+//                }
+//            }
+//        }
+//    }
+//
+//    while(vecWorkList.size() > 0)
+//    {
+//        Function * pCurrent = vecWorkList[vecWorkList.size() -1];
+//        vecWorkList.pop_back();
+//
+//        for(Function::iterator BB = pCurrent->begin(); BB != pCurrent->end(); BB ++  )
+//        {
+//            if(isa<UnreachableInst>(BB->getTerminator()))
+//            {
+//                continue;
+//            }
+//
+//            for(BasicBlock::iterator II = BB->begin(); II != BB->end(); II ++ )
+//            {
+//                if(isa<DbgInfoIntrinsic>(II))
+//                {
+//                    continue;
+//                }
+//                else if(isa<InvokeInst>(II) || isa<CallInst>(II))
+//                {
+//                    CallSite cs(II);
+//                    Function * pCalled = cs.getCalledFunction();
+//
+//                    if(pCalled != NULL && this->LibraryTypeMapping.find(pCalled) == this->LibraryTypeMapping.end() && !pCalled->isDeclaration() )
+//                    {
+//                        FuncCallSiteMapping[pCalled].insert(II);
+//
+//                        if(toDo.find(pCalled) == toDo.end() )
+//                        {
+//                            toDo.insert(pCalled);
+//                            vecWorkList.push_back(pCalled);
+//                        }
+//                    }
+//                }
+//
+//                MDNode *Node = II->getMetadata("ins_id");
+//
+//                if(!Node)
+//                {
+//                    continue;
+//                }
+//
+//                assert(Node->getNumOperands() == 1);
+//                ConstantInt *CI = dyn_cast<ConstantInt>(Node->getOperand(0));
+//                assert(CI);
+//
+//                if(this->MonitoredElems.MonitoredInst.find(CI->getZExtValue()) != this->MonitoredElems.MonitoredInst.end())
+//                {
+//                    if(isa<LoadInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II) )
+//                    {
+//                        setMonitoredInstInCallee.insert(II);
+//                    }
+//                    else
+//                    {
+//                        assert(0);
+//                    }
+//                }
+//            }
+//        }
+//    }
+//
+//    set<Function *>::iterator itSetFuncBegin = toDo.begin();
+//    set<Function *>::iterator itSetFuncEnd   = toDo.end();
+//
+//    for(; itSetFuncBegin != itSetFuncEnd; itSetFuncBegin ++ )
+//    {
+//        Function * rawFunction = *itSetFuncBegin;
+//        Function * duplicateFunction = CloneFunction(rawFunction, VCalleeMap, false);
+//        duplicateFunction->setName(rawFunction->getName() + ".CPI");
+//        duplicateFunction->setLinkage(GlobalValue::InternalLinkage);
+//        rawFunction->getParent()->getFunctionList().push_back(duplicateFunction);
+//
+//        VCalleeMap[rawFunction] = duplicateFunction;
+//    }
+//
+//
+//    itSetFuncBegin = toDo.begin();
+//
+//    for(; itSetFuncBegin != itSetFuncEnd; itSetFuncBegin ++ )
+//    {
+//        set<Instruction *>::iterator itSetInstBegin = FuncCallSiteMapping[*itSetFuncBegin].begin();
+//        set<Instruction *>::iterator itSetInstEnd   = FuncCallSiteMapping[*itSetFuncBegin].end();
+//
+//        ValueToValueMapTy::iterator FuncIt = VCalleeMap.find(*itSetFuncBegin);
+//        assert(FuncIt != VCalleeMap.end());
+//
+//        Function * clonedFunction = cast<Function>(FuncIt->second);
+//
+//        for(; itSetInstBegin != itSetInstEnd; itSetInstBegin ++ )
+//        {
+//            ValueToValueMapTy::iterator It = VCalleeMap.find(*itSetInstBegin);
+//
+//            if (It != VCalleeMap.end())
+//            {
+//                if(CallInst * pCall = dyn_cast<CallInst>(It->second) )
+//                {
+//                    pCall->setCalledFunction(clonedFunction);
+//                }
+//                else if(InvokeInst * pInvoke = dyn_cast<InvokeInst>(It->second))
+//                {
+//                    pInvoke->setCalledFunction(clonedFunction);
+//                }
+//            }
+//        }
+//    }
+//
+//    set<Instruction *>::iterator itMonInstBegin = setMonitoredInstInCallee.begin();
+//    set<Instruction *>::iterator itMonInstEnd   = setMonitoredInstInCallee.end();
+//
+//    for(; itMonInstBegin != itMonInstEnd ; itMonInstBegin ++ )
+//    {
+//        //assert(isa<LoadInst>(*itMonInstBegin));
+//        ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
+//        assert(It != VCalleeMap.end());
+//
+//        if(isa<LoadInst>(It->second))
+//        {
+//            InlineHookLoad(cast<LoadInst>(It->second));
+//        }
+//        else if(isa<MemSetInst>(It->second) )
+//        {
+//
+//            continue;
+//        }
+//        else if(MemTransferInst * pMem = dyn_cast<MemTransferInst>(It->second))
+//        {
+//            BasicBlock::iterator next = cast<Instruction>(It->second);
+//            next ++;
+//
+//            InlineHookMem(pMem, next);
+//        }
+//        else if(isa<CallInst>(It->second) || isa<InvokeInst>(It->second))
+//        {
+//            BasicBlock::iterator next = cast<Instruction>(It->second);
+//            next ++;
+//
+//            InlineHookInst(cast<Instruction>(It->second), next);
+//        }
+//        else
+//        {
+//            assert(0);
+//        }
+//    }
+//
+//    void LoopInstrumentor::InlineHookLoad(LoadInst *pLoad)
+//    {
+//        if(pLoad->getType()->isVectorTy())
+//        {
+//            return;
+//        }
+//
+//        BasicBlock::iterator II = pLoad;
+//        II ++;
+//        Constant * const_ptr;
+//        StoreInst * pStore;
+//        CastInst * pCast1 = new PtrToIntInst(pLoad->getPointerOperand(), this->LongType, "", II);
+//        CastInst * pCast2 = NULL;
+//
+//        vector<Constant *> vecIndex;
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt0);
+//        const_ptr = ConstantExpr::getGetElementPtr(this->Record_CPI, vecIndex);
+//        pStore = new StoreInst(this->ConstantInt0, const_ptr, false, II);
+//        pStore->setAlignment(4);
+//
+//        vecIndex.clear();
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt1);
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt1);
+//        const_ptr = ConstantExpr::getGetElementPtr(this->Record_CPI, vecIndex);
+//        pStore = new StoreInst(pCast1, const_ptr, false, II);
+//        pStore->setAlignment(8);
+//
+//        vecIndex.clear();
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt1);
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt2);
+//        const_ptr = ConstantExpr::getGetElementPtr(this->Record_CPI, vecIndex);
+//
+//        if(IntegerType * pIntType = dyn_cast<IntegerType>(pLoad->getType()))
+//        {
+//            if(pIntType->getBitWidth() == 64)
+//            {
+//                pStore = new StoreInst(pLoad, const_ptr, false, II);
+//            }
+//            else
+//            {
+//                pCast2 = CastInst::CreateIntegerCast(pLoad, this->LongType, true, "", II);
+//                pStore = new StoreInst(pCast2, const_ptr, false, II);
+//            }
+//
+//        }
+//        else if(isa<PointerType>(pLoad->getType()))
+//        {
+//            pCast2 = new PtrToIntInst(pLoad, this->LongType, "", II);
+//            pStore = new StoreInst(pCast2, const_ptr, false, II);
+//        }
+//        else if(pLoad->getType()->isDoubleTy())
+//        {
+//            CastInst * pCast = new FPToSIInst(pLoad, this->LongType, "", II);
+//            pStore = new StoreInst(pCast, const_ptr, false, II);
+//        }
+//        else
+//        {
+//            assert(0);
+//        }
+//
+//        pStore->setAlignment(8);
+//
+//        MDNode *Node = pLoad->getMetadata("ins_id");
+//        assert(Node);
+//        assert(Node->getNumOperands() == 1);
+//        ConstantInt *CI = dyn_cast<ConstantInt>(Node->getOperand(0));
+//
+//        vecIndex.clear();
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt1);
+//        vecIndex.push_back(this->ConstantInt0);
+//        vecIndex.push_back(this->ConstantInt0);
+//        const_ptr = ConstantExpr::getGetElementPtr(this->Record_CPI, vecIndex);
+//        pStore = new StoreInst(CI, const_ptr, false, II);
+//        pStore->setAlignment(4);
+//
+//        LoadInst * pLoadPointer = new LoadInst(this->pcBuffer_CPI, "", false, II);
+//        pLoadPointer->setAlignment(8);
+//        LoadInst * pLoadIndex   = new LoadInst(this->iBufferIndex_CPI, "", false, II);
+//        pLoadIndex->setAlignment(8);
+//
+//        GetElementPtrInst* getElementPtr = GetElementPtrInst::Create(pLoadPointer, pLoadIndex, "", II);
+//        LoadInst * pLoadRecordSize = new LoadInst(this->iRecordSize_CPI, "", false, II);
+//        pLoadRecordSize->setAlignment(8);
+//
+//        Constant* const_ptr_Record = ConstantExpr::getCast(Instruction::BitCast, this->Record_CPI, this->CharStarType);
+//
+//        vector<Value *> vecParam;
+//        vecParam.push_back(getElementPtr);
+//        vecParam.push_back(const_ptr_Record);
+//        vecParam.push_back(pLoadRecordSize);
+//        vecParam.push_back(this->ConstantInt1);
+//        vecParam.push_back(this->ConstantIntFalse);
+//
+//        CallInst * pCall = CallInst::Create(this->func_llvm_memcpy, vecParam, "", II);
+//        pCall->setCallingConv(CallingConv::C);
+//        pCall->setTailCall(false);
+//        AttributeSet AS;
+//        pCall->setAttributes(AS);
+//
+//        BinaryOperator * pAdd = BinaryOperator::Create(Instruction::Add, pLoadIndex, pLoadRecordSize, "", II);
+//        pStore = new StoreInst(pAdd, this->iBufferIndex_CPI, false, II);
+//        pStore->setAlignment(8);
+//
+//    }
+//
+//}
 
 
 

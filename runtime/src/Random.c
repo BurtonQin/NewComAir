@@ -2,7 +2,7 @@
 // Random generator
 //
 
-#include "Random.h"
+#include "../include/Random.h"
 
 #include <math.h>
 

@@ -2,7 +2,7 @@
 // Shared memory
 //
 
-#include "Shmem.h"
+#include "../include/Shmem.h"
 
 #include <errno.h>
 #include <fcntl.h>

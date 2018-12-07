@@ -1,2 +1,1 @@
-add_subdirectory(Random)
-add_subdirectory(Shmem)
+add_subdirectory(src)

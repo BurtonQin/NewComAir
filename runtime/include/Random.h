@@ -1,5 +1,5 @@
-#ifndef NEWCOMAIR_RANDOM_H
-#define NEWCOMAIR_RANDOM_H
+#ifndef NEWCOMAIR_RUNTIME_RANDOM_H
+#define NEWCOMAIR_RUNTIME_RANDOM_H
 
 /*---- sampling generator ----*/
 
@@ -22,4 +22,4 @@ static double rand_val(int seed);    // Jain's RNG
 
 /*---- end ----*/
 
-#endif //NEWCOMAIR_RANDOM_H
+#endif //NEWCOMAIR_RUNTIME_RANDOM_H

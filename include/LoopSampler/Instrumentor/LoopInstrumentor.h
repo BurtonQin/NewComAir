@@ -2,18 +2,18 @@
 // CloneSample Pass demo.
 //
 
-#ifndef NEWCOMAIR_ARRAYLISTSAMPLEINSTRUMENT_H
-#define NEWCOMAIR_ARRAYLISTSAMPLEINSTRUMENT_H
+#ifndef NEWCOMAIR_LOOPINSTRUMENT_H
+#define NEWCOMAIR_LOOPINSTRUMENT_H
 
 #include "llvm/Pass.h"
 
 using namespace llvm;
 
-struct ArrayListSampleInstrument : public ModulePass {
+struct LoopInstrumentor : public ModulePass {
 
     static char ID;
 
-    ArrayListSampleInstrument();
+    LoopInstrumentor();
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
 
@@ -41,6 +41,8 @@ private:
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
     void InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecAdd);
+
+    void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap, std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
     void InstrumentMain();
 
@@ -99,4 +101,4 @@ private:
 
 };
 
-#endif //NEWCOMAIR_ARRAYLISTSAMPLEINSTRUMENT_H
+#endif //NEWCOMAIR_LOOPINSTRUMENT_H
