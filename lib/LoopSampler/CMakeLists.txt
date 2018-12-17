@@ -1,1 +1,1 @@
-add_subdirectory(Instrumentor)
+add_subdirectory(LoopInstrumentor)
