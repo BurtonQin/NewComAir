@@ -111,7 +111,14 @@ void LoopInstrumentor::SetupGlobals() {
     this->pcBuffer_CPI->setAlignment(8);
     this->pcBuffer_CPI->setInitializer(this->ConstantNULL);
 
-    //"SAMPLE_RATE" string
+    // long iBufferIndex_CPI = 0;
+    assert(pModule->getGlobalVariable("iBufferIndex_CPI") == NULL);
+    this->iBufferIndex_CPI = new GlobalVariable(*pModule, this->LongType, false, GlobalValue::ExternalLinkage, 0,
+                                                "iBufferIndex_CPI");
+    this->iBufferIndex_CPI->setAlignment(8);
+    this->iBufferIndex_CPI->setInitializer(this->ConstantLong0);
+
+    // const char* SAMPLE_RATE_ptr = "SAMPLE_RATE"
     ArrayType *ArrayTy12 = ArrayType::get(this->CharType, 12);
     GlobalVariable *pArrayStr = new GlobalVariable(*pModule, ArrayTy12, true, GlobalValue::PrivateLinkage, 0, "");
     pArrayStr->setAlignment(1);
@@ -151,12 +158,11 @@ void LoopInstrumentor::SetupFunctions() {
     }
 
     this->function_atoi = pModule->getFunction("atoi");
-    if(!this->function_atoi)
-    {
+    if (!this->function_atoi) {
         ArgTypes.clear();
         ArgTypes.push_back(this->CharStarType);
-        FunctionType * atoi_FuncTy = FunctionType::get(this->IntType, ArgTypes, false);
-        this->function_atoi = Function::Create(atoi_FuncTy, GlobalValue::ExternalLinkage, "atoi", pModule );
+        FunctionType *atoi_FuncTy = FunctionType::get(this->IntType, ArgTypes, false);
+        this->function_atoi = Function::Create(atoi_FuncTy, GlobalValue::ExternalLinkage, "atoi", pModule);
         this->function_atoi->setCallingConv(CallingConv::C);
         ArgTypes.clear();
     }
@@ -189,8 +195,8 @@ void LoopInstrumentor::SetupFunctions() {
     // InitMemHooks
     this->InitMemHooks = this->pModule->getFunction("InitMemHooks");
     if (!this->InitMemHooks) {
-        FunctionType *InitMemHooks_FuncTy = FunctionType::get(this->LongStarType, ArgTypes, false);
-        this->InitMemHooks = Function::Create(InitMemHooks_FuncTy, GlobalValue::ExternalLinkage, "InitMemHooks",
+        FunctionType *InitHooks_FuncTy = FunctionType::get(this->CharStarType, ArgTypes, false);
+        this->InitMemHooks = Function::Create(InitHooks_FuncTy, GlobalValue::ExternalLinkage, "InitMemHooks",
                                               this->pModule);
         this->InitMemHooks->setCallingConv(CallingConv::C);
         ArgTypes.clear();
@@ -199,24 +205,13 @@ void LoopInstrumentor::SetupFunctions() {
     // FinalizeMemHooks
     this->FinalizeMemHooks = this->pModule->getFunction("FinalizeMemHooks");
     if (!this->FinalizeMemHooks) {
+        ArgTypes.push_back(this->LongType);
         FunctionType *FinalizeMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
         this->FinalizeMemHooks = Function::Create(FinalizeMemHooks_FuncTy, GlobalValue::ExternalLinkage,
                                                   "FinalizeMemHooks", this->pModule);
         this->FinalizeMemHooks->setCallingConv(CallingConv::C);
         ArgTypes.clear();
     }
-
-//    // RecordMemHooks
-//    this->RecordMemHooks = this->pModule->getFunction("RecordMemHooks");
-//    if (!this->RecordMemHooks) {
-//        ArgTypes.push_back(this->VoidPointerType);
-//        ArgTypes.push_back(this->LongType);
-//        FunctionType *RecordMemHooks_FuncTy = FunctionType::get(this->VoidType, ArgTypes, false);
-//        this->RecordMemHooks = Function::Create(RecordMemHooks_FuncTy, GlobalValue::ExternalLinkage, "RecordMemHooks",
-//                                                this->pModule);
-//        this->RecordMemHooks->setCallingConv(CallingConv::C);
-//        ArgTypes.clear();
-//    }
 }
 
 void LoopInstrumentor::InstrumentMain() {
@@ -275,7 +270,9 @@ void LoopInstrumentor::InstrumentMain() {
 
             // Instrument FinalizeMemHooks before return.
             if (ReturnInst *pRet = dyn_cast<ReturnInst>(II)) {
-                pCall = CallInst::Create(this->FinalizeMemHooks, "", pRet);
+                LoadInst *pLoad = new LoadInst(this->iBufferIndex_CPI, "", false, pRet);
+                pLoad->setAlignment(8);
+                pCall = CallInst::Create(this->FinalizeMemHooks, pLoad, "", pRet);
                 pCall->setCallingConv(CallingConv::C);
                 pCall->setTailCall(false);
                 pCall->setAttributes(emptyList);
