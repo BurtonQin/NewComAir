@@ -32,11 +32,11 @@ private:
 
     void SetupTypes();
 
+    void SetupStructs();
+
     void SetupConstants();
 
     void SetupGlobals();
-
-    void SetupStructs();
 
     void SetupFunctions();
 
@@ -45,6 +45,8 @@ private:
     void CreateIfElseBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
 
     void CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
+
+    void InstrumentDelimit(vector<BasicBlock *> &vecAdd);
 
     void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap, std::vector<BasicBlock *> &vecCloned);
 
@@ -55,14 +57,14 @@ private:
 
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap, std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
-    void InlineHookLoad(LoadInst *pLoad);
-    void InlineHookInst(Instruction *pI, Instruction *II);
-
     void InstrumentMain();
 
-    void InlineHookDelimit(Instruction *II);
+    void InlineMemcpy(Instruction *InsertBefore);
 
-    void InlineHookMem(MemTransferInst *pMem, Instruction *II);
+    void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
+    void InlineHookDelimit(Instruction *InsertBefore);
+    void InlineHookStore(StoreInst *pStore, Instruction *InsertBefore);
+    void InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore);
 
     /* Module */
     Module *pModule;
@@ -70,38 +72,34 @@ private:
     vector<std::pair<Function *, int> > vecParaID;
     /* ********** */
 
+    /* Struct */
+    StructType *struct_stMemRecord;
+
     /* Type */
     Type *VoidType;
     IntegerType *LongType;
     PointerType *LongStarType;
     IntegerType *IntType;
     PointerType *VoidPointerType;
-
     IntegerType *CharType;
     PointerType *CharStarType;
-
     IntegerType *BoolType;
-
+    ArrayType *ArrayRecordType;
+    PointerType* ArrayRecordPointerType;
     /* ********** */
 
+    /* ********* */
 
     /* Global Variable */
-//    GlobalVariable *numCost;
-//    AllocaInst *itNum;
-//    GlobalVariable *numGlobalCost;
     GlobalVariable *SAMPLE_RATE;
     GlobalVariable *numGlobalCounter;
-    GlobalVariable *PC_SAMPLE_RATE;
-    GlobalVariable *CURRENT_SAMPLE;
     GlobalVariable *Record_CPI;
+    GlobalVariable *Records_CPI;
     GlobalVariable *pcBuffer_CPI;
-    GlobalVariable *iRecordSize_CPI;
     GlobalVariable *iBufferIndex_CPI;
+    GlobalVariable *iRecordIndex_CPI;
     /* ***** */
 
-    /* Struct */
-
-    StructType *struct_stMemRecord;
     /* ***** */
     /* Function */
     // int aprof_init()
@@ -111,8 +109,12 @@ private:
 //    // void aprof_return(unsigned long numCost,  unsigned long itNum)
 //    Function *aprof_return;
 
+    // sample_rate_str = getenv("SAMPLE_RATE");
     Function *getenv;
+    // sample_rate = atoi(sample_rate_str)
     Function *function_atoi;
+    Function *func_llvm_memcpy;
+
     Function *geo;
 
     // Init shared memory at the entry of main function.
@@ -136,12 +138,26 @@ private:
     /* Constant */
     ConstantInt *ConstantLong0;
     ConstantInt *ConstantLong1;
-    ConstantInt *ConstantInt0;
+    ConstantInt *ConstantInt0;  // end
     ConstantInt *ConstantIntN1;
-    ConstantInt *ConstantInt1;
+    ConstantInt *ConstantInt1;  // delimit
+    ConstantInt *ConstantInt2;  // load
+    ConstantInt *ConstantInt3;  // store
+    ConstantInt *ConstantInt4;  // memcpy
+    ConstantInt *ConstantInt5;  // memmove
+    ConstantInt *ConstantLong10;
+    ConstantInt *ConstantLong16;
     ConstantInt *ConstantIntFalse;
     ConstantPointerNull *ConstantNULL;
     Constant *SAMPLE_RATE_ptr;
+
+    ConstantAggregateZero *ConstantStMemRecord;
+    //ConstantAggregateZero *ConstantArrayRecord;
+
+    Constant *ConstantPtrRecord;
+    Constant *ConstantRecordAddress;
+    Constant *ConstantRecordLength;
+    Constant *ConstantRecordFlag;
     /* ********** */
 
 };

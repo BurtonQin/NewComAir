@@ -2,7 +2,7 @@
 // Shared memory
 //
 
-#include "../include/Shmem.h"
+#include "Shmem.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -11,8 +11,6 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
-
-#include "Random.h"
 
 // the log file name
 static const char *g_LogFileName = "newcomair_123456789";
@@ -29,16 +27,16 @@ static int fd = -1;
 char* InitMemHooks() {
     fd = shm_open(g_LogFileName, O_RDWR | O_CREAT, 0777);
     if (fd == -1) {
-        fprintf(stderr, "shm_open failed:%s\n", strerror(errno));
+        fprintf(stderr, "shm_open failed: %s\n", strerror(errno));
         exit(-1);
     }
     if (ftruncate(fd, BUFFERSIZE) == -1) {
-        fprintf(stderr, "fstruncate failed:%s\n", strerror(errno));
+        fprintf(stderr, "fstruncate failed: %s\n", strerror(errno));
         exit(-1);
     }
-    char *pcBuffer = (unsigned long *)mmap(0, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    char *pcBuffer = (char *)mmap(0, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (pcBuffer == NULL) {
-        fprintf(stderr, "mmap failed:%s\n", strerror(errno));
+        fprintf(stderr, "mmap failed: %s\n", strerror(errno));
         exit(-1);
     }
     return pcBuffer;
@@ -47,7 +45,7 @@ char* InitMemHooks() {
 /**
  * Truncate the shared memory buffer to the actual data size, then close.
  */
-void FinalizeMemHooks() {
+void FinalizeMemHooks(unsigned long iBufferIndex) {
     if (ftruncate(fd, iBufferIndex) == -1) {
         fprintf(stderr, "ftruncate: %s\n", strerror(errno));
         exit(-1);

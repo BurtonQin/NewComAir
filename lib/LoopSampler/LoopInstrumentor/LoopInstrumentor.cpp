@@ -44,8 +44,8 @@ static cl::opt<std::string> strFuncName("strFunc",
                                         cl::desc("Function Name"), cl::Optional,
                                         cl::value_desc("strFuncName"));
 
-static cl::opt<bool> bElseIf("elseIf", cl::desc("use if-elseif-else instead of if-else"), cl::Optional,
-                             cl::value_desc("bElseIf"), cl::init(true));
+static cl::opt<bool> bElseIf("bElseIf", cl::desc("use if-elseif-else instead of if-else"), cl::Optional,
+                             cl::value_desc("bElseIf"), cl::init(false));
 
 char LoopInstrumentor::ID = 0;
 
@@ -67,30 +67,56 @@ void LoopInstrumentor::SetupTypes() {
     this->CharType = IntegerType::get(pModule->getContext(), 8);
     this->BoolType = IntegerType::get(pModule->getContext(), 1);
 
-    this->VoidPointerType = PointerType::get(IntegerType::get(pModule->getContext(), 8), 0);
+    this->VoidPointerType = PointerType::get(this->CharType, 0);
     this->CharStarType = PointerType::get(this->CharType, 0);
     this->LongStarType = PointerType::get(this->LongType, 0);
 }
 
+void LoopInstrumentor::SetupStructs() {
+    vector<Type *> struct_fields;
+
+    assert(pModule->getTypeByName("struct.stMemRecord") == NULL);
+    this->struct_stMemRecord = StructType::create(pModule->getContext(), "struct.stMemRecord");
+    struct_fields.clear();
+    struct_fields.push_back(this->LongType);  // address
+    struct_fields.push_back(this->IntType);   // length
+    // 0: end; 1: delimiter; 2: load; 3: store; 4: memcpy; 5: memmove
+    struct_fields.push_back(this->IntType);   // flag
+    if (this->struct_stMemRecord->isOpaque()) {
+        this->struct_stMemRecord->setBody(struct_fields, false);
+    }
+}
+
 void LoopInstrumentor::SetupConstants() {
 
-    // long: 0, 1
+    // long: 0, 1, 10, 16
     this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
     this->ConstantLong1 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("1"), 10));
+    this->ConstantLong10 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("10"), 10));
+    this->ConstantLong16 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("16"), 10));
 
-    // int: 0, -1, 1, 0
-    this->ConstantInt0 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("0"), 10));
+    // int: -1, 0, 1, 2, 3, 4
     this->ConstantIntN1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("-1"), 10));
+    this->ConstantInt0 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("0"), 10));
     this->ConstantInt1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("1"), 10));
+    this->ConstantInt2 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("2"), 10));
+    this->ConstantInt3 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("3"), 10));
+    this->ConstantInt4 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("4"), 10));
+
+    // bool: false
     this->ConstantIntFalse = ConstantInt::get(pModule->getContext(), APInt(1, StringRef("0"), 10));
 
     // char*: NULL
     this->ConstantNULL = ConstantPointerNull::get(this->CharStarType);
+
+    // struct_stMemRecord: {0,0,0}
+    this->ConstantStMemRecord = ConstantAggregateZero::get(this->struct_stMemRecord);
 }
 
 void LoopInstrumentor::SetupGlobals() {
 
     // int numGlobalCounter = 0;
+    // TODO: CommonLinkage or ExternalLinkage
     assert(pModule->getGlobalVariable("numGlobalCounter") == NULL);
     this->numGlobalCounter = new GlobalVariable(*pModule, this->IntType, false, GlobalValue::ExternalLinkage, 0,
                                                 "numGlobalCounter");
@@ -118,7 +144,18 @@ void LoopInstrumentor::SetupGlobals() {
     this->iBufferIndex_CPI->setAlignment(8);
     this->iBufferIndex_CPI->setInitializer(this->ConstantLong0);
 
-    // const char* SAMPLE_RATE_ptr = "SAMPLE_RATE"
+    // struct_stLogRecord Record_CPI
+    assert(pModule->getGlobalVariable("Record_CPI") == NULL);
+    this->Record_CPI = new GlobalVariable(*pModule, this->struct_stMemRecord, false, GlobalValue::ExternalLinkage, 0,
+                                          "Record_CPI");
+    this->Record_CPI->setAlignment(16);
+    ConstantAggregateZero *const_struct = ConstantAggregateZero::get(this->struct_stMemRecord);
+    this->Record_CPI->setInitializer(const_struct);
+
+    // char *pRecord_CPI = (char *)&Record_CPI;
+    this->ConstantPtrRecord = ConstantExpr::getCast(Instruction::BitCast, this->Record_CPI, this->CharStarType);
+
+    // const char *SAMPLE_RATE_ptr = "SAMPLE_RATE"
     ArrayType *ArrayTy12 = ArrayType::get(this->CharType, 12);
     GlobalVariable *pArrayStr = new GlobalVariable(*pModule, ArrayTy12, true, GlobalValue::PrivateLinkage, 0, "");
     pArrayStr->setAlignment(1);
@@ -128,19 +165,6 @@ void LoopInstrumentor::SetupGlobals() {
     vecIndex.push_back(this->ConstantInt0);
     this->SAMPLE_RATE_ptr = ConstantExpr::getGetElementPtr(ArrayTy12, pArrayStr, vecIndex);
     pArrayStr->setInitializer(ConstArray);
-}
-
-void LoopInstrumentor::SetupStructs() {
-    vector<Type *> struct_fields;
-
-    assert(pModule->getTypeByName("struct.stMemRecord") == NULL);
-    this->struct_stMemRecord = StructType::create(pModule->getContext(), "struct.stMemRecord");
-    struct_fields.clear();
-    struct_fields.push_back(this->LongType);  // address
-    struct_fields.push_back(this->LongType);   // flagAndLength
-    if (this->struct_stMemRecord->isOpaque()) {
-        this->struct_stMemRecord->setBody(struct_fields, false);
-    }
 }
 
 void LoopInstrumentor::SetupFunctions() {
@@ -157,6 +181,7 @@ void LoopInstrumentor::SetupFunctions() {
         ArgTypes.clear();
     }
 
+    // atoi
     this->function_atoi = pModule->getFunction("atoi");
     if (!this->function_atoi) {
         ArgTypes.clear();
@@ -166,21 +191,54 @@ void LoopInstrumentor::SetupFunctions() {
         this->function_atoi->setCallingConv(CallingConv::C);
         ArgTypes.clear();
     }
-//
-//    // func_llvm_memcpy
-//    this->func_llvm_memcpy = pModule->getFunction("llvm.memcpy.p0i8.p0i8.i64");
-//    if (!this->func_llvm_memcpy) {
-//        ArgTypes.clear();
-//        ArgTypes.push_back(this->CharStarType);
-//        ArgTypes.push_back(this->CharStarType);
-//        ArgTypes.push_back(this->LongType);
-//        ArgTypes.push_back(this->IntType);
-//        ArgTypes.push_back(this->BoolType);
-//        FunctionType *memcpy_funcTy = FunctionType::get(this->VoidType, ArgTypes, false);
-//        this->func_llvm_memcpy = Function::Create(memcpy_funcTy, GlobalValue::ExternalLinkage,
-//                                                  "llvm.memcpy.p0i8.p0i8.i64", pModule);
-//        this->func_llvm_memcpy->setCallingConv(CallingConv::C);
-//    }
+
+    // func_llvm_memcpy
+    this->func_llvm_memcpy = pModule->getFunction("llvm.memcpy.p0i8.p0i8.i64");
+    if (!this->func_llvm_memcpy) {
+        ArgTypes.clear();
+        ArgTypes.push_back(this->CharStarType);
+        ArgTypes.push_back(this->CharStarType);
+        ArgTypes.push_back(this->LongType);
+        ArgTypes.push_back(this->IntType);
+        ArgTypes.push_back(this->BoolType);
+        FunctionType *memcpy_funcTy = FunctionType::get(this->VoidType, ArgTypes, false);
+        this->func_llvm_memcpy = Function::Create(memcpy_funcTy, GlobalValue::ExternalLinkage,
+                                                  "llvm.memcpy.p0i8.p0i8.i64", pModule);
+        this->func_llvm_memcpy->setCallingConv(CallingConv::C);
+
+        AttributeList func_llvm_memcpy_PAL;
+        {
+            SmallVector<AttributeList, 4> Attrs;
+
+            AttributeList PAS;
+            {
+                AttrBuilder B;
+                B.addAttribute(Attribute::NoCapture);
+                PAS = AttributeList::get(pModule->getContext(), 1U, B);
+            }
+            Attrs.push_back(PAS);
+
+            {
+                AttrBuilder B;
+                B.addAttribute(Attribute::ReadOnly);
+                PAS = AttributeList::get(pModule->getContext(), 2U, B);
+            }
+            Attrs.push_back(PAS);
+
+            {
+                AttrBuilder B;
+                B.addAttribute(Attribute::NoUnwind);
+                PAS = AttributeList::get(pModule->getContext(), ~0U, B);
+            }
+            Attrs.push_back(PAS);
+
+            func_llvm_memcpy_PAL = AttributeList::get(pModule->getContext(), Attrs);
+
+        }
+        this->func_llvm_memcpy->setAttributes(func_llvm_memcpy_PAL);
+
+        ArgTypes.clear();
+    }
 
     // geo
     this->geo = this->pModule->getFunction("geo");
@@ -235,30 +293,58 @@ void LoopInstrumentor::InstrumentMain() {
         // Instrument before FirstNonPHI of main function.
         Instruction *firstInst = pFunctionMain->getEntryBlock().getFirstNonPHI();
 
-        // Instrument pcBuffer_CPI
-//        pStore = new StoreInst(pCall, this)
-
         // Instrument InitMemHooks
         pCall = CallInst::Create(this->InitMemHooks, "", firstInst);
         pCall->setCallingConv(CallingConv::C);
         pCall->setTailCall(false);
         pCall->setAttributes(emptyList);
 
+        // Store to pcBuffer_CPI
+        pStore = new StoreInst(pCall, this->pcBuffer_CPI, false, firstInst);
+        pStore->setAlignment(8);
+
         // Instrument getenv
-        // TODO: change attributes
         vector<Value *> vecParam;
         vecParam.push_back(SAMPLE_RATE_ptr);
         pCall = CallInst::Create(this->getenv, vecParam, "", firstInst);
         pCall->setCallingConv(CallingConv::C);
         pCall->setTailCall(false);
-        pCall->setAttributes(emptyList);
+        // pCall->setAttributes(emptyList);
+        AttributeList func_get_env_PAL;
+        {
+            SmallVector<AttributeList, 4> Attrs;
+            AttributeList PAS;
+            {
+                AttrBuilder B;
+                B.addAttribute(Attribute::NoUnwind);
+                PAS = AttributeList::get(pModule->getContext(), ~0U, B);
+            }
+            Attrs.push_back(PAS);
+            func_get_env_PAL = AttributeList::get(pModule->getContext(), Attrs);
+        }
+        pCall->setAttributes(func_get_env_PAL);
 
         // Instrument atoi
         // TODO: change attributes
         pCall = CallInst::Create(this->function_atoi, pCall, "", firstInst);
         pCall->setCallingConv(CallingConv::C);
         pCall->setTailCall(false);
-        pCall->setAttributes(emptyList);
+        // pCall->setAttributes(emptyList);
+        AttributeList func_atoi_PAL;
+        {
+            SmallVector<AttributeList, 4> Attrs;
+            AttributeList PAS;
+            {
+                AttrBuilder B;
+                B.addAttribute(Attribute::NoUnwind);
+                B.addAttribute(Attribute::ReadOnly);
+                PAS = AttributeList::get(pModule->getContext(), ~0U, B);
+            }
+
+            Attrs.push_back(PAS);
+            func_atoi_PAL = AttributeList::get(pModule->getContext(), Attrs);
+        }
+        pCall->setAttributes(func_atoi_PAL);
 
         // SAMPLE_RATE = atoi(getenv("SAMPLE_RATE"));
         pStore = new StoreInst(pCall, SAMPLE_RATE, false, firstInst);
@@ -300,12 +386,11 @@ void LoopInstrumentor::SetupInit(Module &M) {
     // all set up operation
     this->pModule = &M;
     SetupTypes();
+    SetupStructs();
     SetupConstants();
     SetupGlobals();
-    SetupStructs();
     SetupFunctions();
 }
-
 
 bool LoopInstrumentor::runOnModule(Module &M) {
 
@@ -339,12 +424,6 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
     // add hooks to function called inside the loop
     CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
 
-//    InstrumentCostUpdater(pInnerLoop);
-
-//    vector<LoadInst *> vecLoad;
-//    vector<Instruction *> vecIn;
-//    vector<Instruction *> vecOut;
-
     // created auxiliary basic block
     vector<BasicBlock *> vecAdd;
     if (bElseIf == false) {
@@ -352,6 +431,7 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
     } else {
         CreateIfElseIfBlock(pInnerLoop, vecAdd);
     }
+
     // clone loop
     ValueToValueMapTy VMap;
     vector<BasicBlock *> vecCloned;
@@ -361,29 +441,11 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
     // instrument RecordMemHooks to clone loop
     InstrumentRecordMemHooks(vecCloned);
 
-//    Function *pFunc = pInnerLoop->getHeader()->getParent();
+    // inline delimit
+    BasicBlock *pClonedBody = vecAdd[2];
+    Instruction *pFirstInst = pClonedBody->getFirstNonPHI();
 
-
-//    for (Function::iterator BI = pFunc->begin(); BI != pFunc->end(); ++BI) {
-//
-//        BasicBlock *BB = &*BI;
-//
-//        if (BB->getName().str().find(".CPI") == std::string::npos) {
-//            continue;
-//        }
-//
-//        for (BasicBlock::iterator II = BB->begin(); II != BB->end(); II++) {
-//
-//            Instruction *Inst = &*II;
-//
-//            if (hasMarkFlag(Inst)) {
-//
-//                InstrumentHooks(pFunc, Inst);
-//            }
-//        }
-//    }
-//
-//    InstrumentReturn(pFunc);
+    InlineHookDelimit(pFirstInst);
 }
 
 void LoopInstrumentor::CreateIfElseBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded) {
@@ -709,7 +771,6 @@ void LoopInstrumentor::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &ve
     vector<BasicBlock *>::iterator itVecBegin = BeenCloned.begin();
     vector<BasicBlock *>::iterator itVecEnd = BeenCloned.end();
 
-
     for (; itVecBegin != itVecEnd; itVecBegin++) {
         for (BasicBlock::iterator II = (*itVecBegin)->begin(); II != (*itVecBegin)->end(); II++) {
             this->RemapInstruction(&*II, VMap);
@@ -798,62 +859,44 @@ void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCl
     for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
 
         BasicBlock *pBB = *BB;
-
         for (BasicBlock::iterator II = pBB->begin(); II != pBB->end(); II++) {
             Instruction *pInst = &*II;
 
-            if (pInst->getOpcode() == Instruction::Load) {
+            switch (pInst->getOpcode()) {
+                case Instruction::Load: {
+                    Value *firstOperand = pInst->getOperand(0);
+                    Type *firstOperandType = firstOperand->getType();
 
-                errs() << "Instruction:" << *pInst << '\n';
-
-                Value *var = pInst->getOperand(0);
-
-                if (!var) {
-                    errs() << "var: NULL" << '\n';
-                    continue;
+                    while (isa<PointerType>(firstOperandType)) {
+                        firstOperandType = firstOperandType->getContainedType(0);
+                    }
+                    if (!isa<FunctionType>(firstOperandType)) {
+                        if (LoadInst *pLoad = dyn_cast<LoadInst>(pInst)) {
+                            InlineHookLoad(pLoad, pInst);
+                        }
+                    }
+                    break;
                 }
+                case Instruction::Store: {
+                    Value *secondOperand = pInst->getOperand(0);
+                    Type *secondOperandType = secondOperand->getType();
 
-                errs() << "var:" << *var << '\n';
-
-                DataLayout *dl = new DataLayout(this->pModule);
-
-                Type *type_1 = var->getType()->getContainedType(0);
-
-                if (isa<FunctionType>(type_1)) {
-                    errs() << "type_1: FunctionType" << '\n';
-                    continue;
+                    while (isa<PointerType>(secondOperandType)) {
+                        secondOperandType = secondOperandType->getContainedType(0);
+                    }
+                    if (!isa<FunctionType>(secondOperandType)) {
+                        if (StoreInst *pStore = dyn_cast<StoreInst>(pInst)) {
+                            InlineHookStore(pStore, pInst);
+                        }
+                    }
+                    break;
                 }
-
-                errs() << "type_1:" << *type_1 << '\n';
-
-                if (type_1->isSized()) {
-                    CastInst *voidPtr = new BitCastInst(var, this->VoidPointerType, "", pInst);
-                    ConstantInt *varSize = ConstantInt::get(this->pModule->getContext(),
-                                                            APInt(64,
-                                                                  StringRef(
-                                                                          std::to_string(dl->getTypeAllocSize(type_1))),
-                                                                  10));
-
-                    // External RecordMem
-//                    std::vector<Value *> params;
-//                    params.push_back(voidPtr);
-//                    params.push_back(varSize);
-
-//                    CallInst *pCall = CallInst::Create(this->RecordMemHooks, params, "", pInst);
-//                    pCall->setCallingConv(CallingConv::C);
-//                    pCall->setTailCall(false);
-//                    AttributeList emptyList;
-//                    pCall->setAttributes(emptyList);
-
-                    // Inline RecordMem
-                    //InlineHookMem(, pInst);
-
-                } else {
-
-                    pInst->dump();
-                    type_1->dump();
-                    assert(false);
-                }
+//                // TODO: memcpy, memmove
+//                case Instruction::MemoryOps: {
+//                    break;
+//                }
+                default:
+                    break;
             }
         }
     }
@@ -989,102 +1032,116 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
     }
 }
 
-//// *pcBuffer++ = 0;
-//// *pcBuffer++ = 0;
-//
-//void LoopInstrumentor::InlineHookDelimit(Instruction *II) {
-//
-//    // %0 = load i64** @pBuffer, align 8, !dbg !15
-//    LoadInst *pLoadBufferPtr0 = new LoadInst(this->pcBuffer_CPI, "", false, II);
-//    pLoadBufferPtr0->setAlignment(8);
-//    // %incdec.ptr = getelementptr inbounds i64* %0, i32 1, !dbg !1
-//    GetElementPtrInst *pIncrPtr0 = GetElementPtrInst::Create(this->LongType, pLoadBufferPtr0, this->ConstantInt1, "inc1_pcBuffer_CPI_0", II);
-//    // store i64* %incdec.ptr, i64** @pBuffer, align 8, !dbg !15
-//    StoreInst *pStorePtr0 = new StoreInst(pIncrPtr0, pLoadBufferPtr0, false, II);
-//    pStorePtr0->setAlignment(8);
-//    // store i64 0, i64* %0, align 8, !dbg !16
-//    StoreInst *pStoreBuffer0 = new StoreInst(this->ConstantLong0, pLoadBufferPtr0, false, II);
-//    pStoreBuffer0->setAlignment(8);
-//    // %1 = load i64** @pBuffer, align 8, !dbg !17
-//    LoadInst *pLoadBufferPtr1 = new LoadInst(this->pcBuffer_CPI, "", false, II);
-//    pLoadBufferPtr1->setAlignment(8);
-//    // %incdec.ptr1 = getelementptr inbounds i64* %1, i32 1, !dbg !17
-//    GetElementPtrInst *pIncrPtr1 = GetElementPtrInst::Create(this->LongType, pLoadBufferPtr1, this->ConstantInt1, "inc1_pcBuffer_CPI_1", II);
-//    // store i64* %incdec.ptr1, i64** @pBuffer, align 8, !dbg !17
-//    StoreInst *pStorePtr1 = new StoreInst(pIncrPtr1, this->pcBuffer_CPI, false, II);
-//    pStorePtr1->setAlignment(8);
-//    // store i64 0, i64* %1, align 8, !dbg !18
-//    StoreInst *pStoreBuffer1 = new StoreInst(this->ConstantLong0, pLoadBufferPtr1, false, II);
-//    pStoreBuffer1->setAlignment(8);
-//}
+void LoopInstrumentor::InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore) {
 
+    std::vector<Value *> ptr_address_indices;
+    ptr_address_indices.push_back(this->ConstantInt0);
+    ptr_address_indices.push_back(this->ConstantInt0);
 
-//void LoopInstrumentor::InlineHookMem(MemTransferInst * pMem, Instruction * II)
-//{
-//    MDNode *Node = pMem->getMetadata("ins_id");
-//    assert(Node);
-//    assert(Node->getNumOperands() == 1);
-//    ConstantInt *CI = dyn_cast<ConstantInt>(Node->getOperand(0));
-//
-//    LoadInst * pLoadPointer = new LoadInst(this->pcBuffer_CPI, "", false, II);
-//    pLoadPointer->setAlignment(8);
-//    LoadInst * pLoadIndex   = new LoadInst(this->iBufferIndex_CPI, "", false, II);
-//    pLoadIndex->setAlignment(8);
-//
-//    GetElementPtrInst* getElementPtr = GetElementPtrInst::Create(pLoadPointer, pLoadIndex, "", II);
-//    CastInst * pStoreAddress = new BitCastInst(getElementPtr, this->PT_struct_stLogRecord, "", II);
-//
-//    vector<Value *> vecIndex;
-//    vecIndex.push_back(this->ConstantInt0);
-//    vecIndex.push_back(this->ConstantInt0);
-//    Instruction * const_ptr = GetElementPtrInst::Create(pStoreAddress, vecIndex, "", II);
-//    StoreInst * pStore = new StoreInst(this->ConstantInt5, const_ptr, false, II);
-//    pStore->setAlignment(4);
-//
-//    vecIndex.clear();
-//    vecIndex.push_back(this->ConstantInt0);
-//    vecIndex.push_back(this->ConstantInt1);
-//    Instruction * MemRecord_ptr = GetElementPtrInst::Create(pStoreAddress, vecIndex, "", II);
-//    PointerType * stMemRecord_PT = PointerType::get( this->struct_stMemRecord, 0);
-//    CastInst * pMemRecord = new BitCastInst(MemRecord_ptr, stMemRecord_PT, "", II);
-//
-//    vecIndex.clear();
-//    vecIndex.push_back(this->ConstantInt0);
-//    vecIndex.push_back(this->ConstantInt0);
-//    const_ptr = GetElementPtrInst::Create(pMemRecord, vecIndex, "", II);
-//    pStore = new StoreInst(CI, const_ptr, false, II);
-//    pStore->setAlignment(4);
-//
-//    vecIndex.clear();
-//    vecIndex.push_back(this->ConstantInt0);
-//    vecIndex.push_back(this->ConstantInt1);
-//    const_ptr = GetElementPtrInst::Create(pMemRecord, vecIndex, "", II);
-//    Value * pValueLength = pMem->getLength();
-//    pStore = new StoreInst(pValueLength, const_ptr, false, II);
-//    pStore->setAlignment(8);
-//
-//    LoadInst * pLoadRecordSize = new LoadInst(this->iRecordSize_CPI, "", false, II);
-//    pLoadRecordSize->setAlignment(8);
-//
-//    BinaryOperator * pAdd = BinaryOperator::Create(Instruction::Add, pLoadIndex, pLoadRecordSize, "", II);
-//
-//    getElementPtr = GetElementPtrInst::Create(pLoadPointer, pAdd, "", II);
-//
-//    vector<Value *> vecParam;
-//    vecParam.push_back(getElementPtr);
-//    vecParam.push_back(pMem->getRawSource());
-//    vecParam.push_back(pValueLength);
-//    vecParam.push_back(this->ConstantInt1);
-//    vecParam.push_back(this->ConstantIntFalse);
-//
-//    CallInst * pCall = CallInst::Create(this->func_llvm_memcpy, vecParam, "", II);
-//    pCall->setCallingConv(CallingConv::C);
-//    pCall->setTailCall(false);
-//    AttributeSet AS;
-//    pCall->setAttributes(AS);
-//
-//    pAdd = BinaryOperator::Create(Instruction::Add, pAdd, pValueLength, "", II );
-//    pStore = new StoreInst(pAdd, this->iBufferIndex_CPI, false, II);
-//    pStore->setAlignment(8);
-//
-//}
+    GetElementPtrInst *pAddress = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI,
+                                                            ptr_address_indices, "", InsertBefore);
+    StoreInst *pStoreAddress = new StoreInst(address, pAddress, false, InsertBefore);
+    pStoreAddress->setAlignment(8);
+
+    std::vector<Value *> ptr_length_indices;
+    ptr_length_indices.push_back(this->ConstantInt0);
+    ptr_length_indices.push_back(this->ConstantInt1);
+
+    GetElementPtrInst *pLength = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI,
+                                                           ptr_length_indices, "", InsertBefore);
+    StoreInst *pStoreLength = new StoreInst(length, pLength, false, InsertBefore);
+    pStoreLength->setAlignment(8);
+
+    std::vector<Value *> ptr_flag_indices;
+    ptr_flag_indices.push_back(this->ConstantInt0);
+    ptr_flag_indices.push_back(this->ConstantInt2);
+
+    GetElementPtrInst *pFlag = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI, ptr_flag_indices,
+                                                         "", InsertBefore);
+    StoreInst *pStoreFlag = new StoreInst(flag, pFlag, false, InsertBefore);
+    pStoreFlag->setAlignment(4);
+}
+
+void LoopInstrumentor::InlineMemcpy(Instruction *InsertBefore) {
+
+    StoreInst *pStore;
+    LoadInst *pLoadPointer;
+    LoadInst *pLoadIndex;
+    CallInst *pCall;
+    BinaryOperator *pBinary;
+
+    // memcpy(&pcbuffer_CPI[iBufferIndex_CPI], &Record_CPI, 16);
+    pLoadPointer = new LoadInst(this->pcBuffer_CPI, "", false, InsertBefore);
+    pLoadPointer->setAlignment(8);
+    pLoadIndex = new LoadInst(this->iBufferIndex_CPI, "", false, InsertBefore);
+    pLoadIndex->setAlignment(8);
+    GetElementPtrInst *getElementPtr = GetElementPtrInst::Create(this->CharType, pLoadPointer, pLoadIndex, "",
+                                                                 InsertBefore);
+
+    std::vector<Value *> vecParam;
+    vecParam.push_back(getElementPtr);
+    vecParam.push_back(this->ConstantPtrRecord);
+    vecParam.push_back(this->ConstantLong16);
+    vecParam.push_back(this->ConstantInt1);
+    vecParam.push_back(this->ConstantIntFalse);
+
+    pCall = CallInst::Create(this->func_llvm_memcpy, vecParam, "", InsertBefore);
+    pCall->setCallingConv(CallingConv::C);
+    pCall->setTailCall(true);
+    AttributeList emptyList;
+    pCall->setAttributes(emptyList);
+
+    // iBufferIndex_CPI += 16
+    pBinary = BinaryOperator::Create(Instruction::Add, pLoadIndex, this->ConstantLong16, "iBufferIndex += 16",
+                                     InsertBefore);
+    pStore = new StoreInst(pBinary, this->iBufferIndex_CPI, false, InsertBefore);
+    pStore->setAlignment(8);
+}
+
+void LoopInstrumentor::InlineHookDelimit(Instruction *InsertBefore) {
+
+    InlineSetRecord(this->ConstantLong0, this->ConstantInt0, this->ConstantInt1, InsertBefore);
+    InlineMemcpy(InsertBefore);
+}
+
+void LoopInstrumentor::InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore) {
+
+    Value *var = pLoad->getOperand(0);
+    DataLayout *dl = new DataLayout(this->pModule);
+    Type *type_1 = var->getType()->getContainedType(0);
+
+    if (type_1->isSized()) {
+        ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
+                std::to_string(dl->getTypeAllocSizeInBits(type_1))), 10));
+        CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
+
+        InlineSetRecord(int64_address, const_length, this->ConstantInt2, InsertBefore);
+        InlineMemcpy(InsertBefore);
+
+    } else {
+        pLoad->dump();
+        type_1->dump();
+        assert(false);
+    }
+}
+
+void LoopInstrumentor::InlineHookStore(StoreInst *pStore, Instruction *InsertBefore) {
+
+    Value *var = pStore->getOperand(1);
+    DataLayout *dl = new DataLayout(this->pModule);
+    Type *type_1 = var->getType()->getContainedType(0);
+
+    if (type_1->isSized()) {
+        ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
+                std::to_string(dl->getTypeAllocSizeInBits(type_1))), 10));
+        CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
+
+        InlineSetRecord(int64_address, const_length, this->ConstantInt3, InsertBefore);
+        InlineMemcpy(InsertBefore);
+
+    } else {
+        pStore->dump();
+        type_1->dump();
+        assert(false);
+    }
+}

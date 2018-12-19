@@ -13,6 +13,6 @@ char* InitMemHooks();
  * Truncate the shared memory buffer to the actual data size, then close.
  * @param iBufferIndex curr index of shared mem buffer.
  */
-void FinalizeMemHooks(long iBufferIndex);
+void FinalizeMemHooks(unsigned long iBufferIndex);
 
 #endif //NEWCOMAIR_RUNTIME_SHMEM_H
