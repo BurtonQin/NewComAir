@@ -25,8 +25,11 @@ target.lalls.bc: target.bc.id
 	 -noLine 103 -strFile ${SRC_FILE} \
 	 -strFunc indexOf target.bc.id > target.lalls.bc
 
-target.bc.id: target.ls.bc
-	opt -load ${ID_PASS} -tag-id target.ls.bc > target.bc.id
+target.bc.id: target.licm.bc
+	opt -load ${ID_PASS} -tag-id target.licm.bc > target.bc.id
+
+target.licm.bc: target.ls.bc
+	opt -licm target.ls.bc > target.licm.bc
 
 target.ls.bc: target.bc
 	opt -loop-simplify target.bc > target.ls.bc

@@ -1,0 +1,49 @@
+OP_LEVEL=0
+
+CXX=clang
+CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
+OP_CFLAGS=-O${OP_LEVEL} -Xclang -disable-O0-optnone -g -flto
+LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
+TARGET=target.old.O${OP_LEVEL}
+
+PROJECT_DIR=/home/boqin/Projects/NewComAir/
+LIB_DIR=${PROJECT_DIR}cmake-build-debug/lib/
+ID_PASS=${LIB_DIR}IDAssigner/libIDAssignerPass.so
+BUG_DIR=${PROJECT_DIR}stubs/apache34464/
+INSTALL_DIR=${BUG_DIR}targets.O${OP_LEVEL}/
+BUG_LIB_DIR=${BUG_DIR}lib/
+LOOP_ARRAY_LIST_SAMPLE_PASS=${BUG_LIB_DIR}libArrayListSampleInstrumentPass.so
+INLINE_PASS=${BUG_LIB_DIR}libMakeFunctionInlinePass.so
+RUNTIME_LIB=${BUG_LIB_DIR}prof-lall-hook.o
+SRC_FILE=${BUG_DIR}apache34464/Telnet.c
+
+.PHONY: clean install
+
+${TARGET}: ${TARGET}.inline.bc
+	${CXX} ${OP_CFLAGS} ${LDFLAGS} $< -lm -lrt -o $@
+
+${TARGET}.inline.bc: ${TARGET}.pre.inline.bc ${INLINE_PASS}
+	opt -load ${INLINE_PASS} -func-inline -lib-inline 0 $< > $@
+
+${TARGET}.pre.inline.bc: ${TARGET}.lalls.bc ${RUNTIME_LIB}
+	llvm-link ${RUNTIME_LIB} $< -o $@
+
+${TARGET}.lalls.bc: ${TARGET}.bc.id ${LOOP_ARRAY_LIST_SAMPLE_PASS} ${SRC_FILE}
+	opt -load ${LOOP_ARRAY_LIST_SAMPLE_PASS} -array-list-sample-instrument \
+	 -noLine 103 -strFile ${SRC_FILE} \
+	 -strFunc indexOf $< > $@
+
+${TARGET}.bc.id: ${TARGET}.ls.bc ${ID_PASS}
+	opt -load ${ID_PASS} -tag-id $< > $@
+
+${TARGET}.ls.bc: ${TARGET}.bc
+	opt -loop-simplify $< > $@
+
+${TARGET}.bc: ${SRC_FILE}
+	${CXX} ${CFLAGS} $< -c -o $@
+
+install: ${TARGET}
+	mv ${TARGET} ${INSTALL_DIR}
+
+clean:
+	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id ${TARGET}.aprof *.ll *.aprof *.inline *.txt *.lalls

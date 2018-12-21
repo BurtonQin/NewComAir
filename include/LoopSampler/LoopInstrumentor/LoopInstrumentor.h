@@ -46,8 +46,6 @@ private:
 
     void CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
 
-    void InstrumentDelimit(vector<BasicBlock *> &vecAdd);
-
     void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap, std::vector<BasicBlock *> &vecCloned);
 
     // copy operands and incoming values from old Inst to new Inst
@@ -58,8 +56,6 @@ private:
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap, std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
     void InstrumentMain();
-
-    void InlineMemcpy(Instruction *InsertBefore);
 
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
     void InlineHookDelimit(Instruction *InsertBefore);
@@ -72,9 +68,6 @@ private:
     vector<std::pair<Function *, int> > vecParaID;
     /* ********** */
 
-    /* Struct */
-    StructType *struct_stMemRecord;
-
     /* Type */
     Type *VoidType;
     IntegerType *LongType;
@@ -84,9 +77,10 @@ private:
     IntegerType *CharType;
     PointerType *CharStarType;
     IntegerType *BoolType;
-    ArrayType *ArrayRecordType;
-    PointerType* ArrayRecordPointerType;
     /* ********** */
+
+    /* Struct */
+    StructType *struct_stMemRecord;
 
     /* ********* */
 

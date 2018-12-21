@@ -1032,76 +1032,9 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
     }
 }
 
-void LoopInstrumentor::InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore) {
-
-    std::vector<Value *> ptr_address_indices;
-    ptr_address_indices.push_back(this->ConstantInt0);
-    ptr_address_indices.push_back(this->ConstantInt0);
-
-    GetElementPtrInst *pAddress = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI,
-                                                            ptr_address_indices, "", InsertBefore);
-    StoreInst *pStoreAddress = new StoreInst(address, pAddress, false, InsertBefore);
-    pStoreAddress->setAlignment(8);
-
-    std::vector<Value *> ptr_length_indices;
-    ptr_length_indices.push_back(this->ConstantInt0);
-    ptr_length_indices.push_back(this->ConstantInt1);
-
-    GetElementPtrInst *pLength = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI,
-                                                           ptr_length_indices, "", InsertBefore);
-    StoreInst *pStoreLength = new StoreInst(length, pLength, false, InsertBefore);
-    pStoreLength->setAlignment(8);
-
-    std::vector<Value *> ptr_flag_indices;
-    ptr_flag_indices.push_back(this->ConstantInt0);
-    ptr_flag_indices.push_back(this->ConstantInt2);
-
-    GetElementPtrInst *pFlag = GetElementPtrInst::Create(this->struct_stMemRecord, this->Record_CPI, ptr_flag_indices,
-                                                         "", InsertBefore);
-    StoreInst *pStoreFlag = new StoreInst(flag, pFlag, false, InsertBefore);
-    pStoreFlag->setAlignment(4);
-}
-
-void LoopInstrumentor::InlineMemcpy(Instruction *InsertBefore) {
-
-    StoreInst *pStore;
-    LoadInst *pLoadPointer;
-    LoadInst *pLoadIndex;
-    CallInst *pCall;
-    BinaryOperator *pBinary;
-
-    // memcpy(&pcbuffer_CPI[iBufferIndex_CPI], &Record_CPI, 16);
-    pLoadPointer = new LoadInst(this->pcBuffer_CPI, "", false, InsertBefore);
-    pLoadPointer->setAlignment(8);
-    pLoadIndex = new LoadInst(this->iBufferIndex_CPI, "", false, InsertBefore);
-    pLoadIndex->setAlignment(8);
-    GetElementPtrInst *getElementPtr = GetElementPtrInst::Create(this->CharType, pLoadPointer, pLoadIndex, "",
-                                                                 InsertBefore);
-
-    std::vector<Value *> vecParam;
-    vecParam.push_back(getElementPtr);
-    vecParam.push_back(this->ConstantPtrRecord);
-    vecParam.push_back(this->ConstantLong16);
-    vecParam.push_back(this->ConstantInt1);
-    vecParam.push_back(this->ConstantIntFalse);
-
-    pCall = CallInst::Create(this->func_llvm_memcpy, vecParam, "", InsertBefore);
-    pCall->setCallingConv(CallingConv::C);
-    pCall->setTailCall(true);
-    AttributeList emptyList;
-    pCall->setAttributes(emptyList);
-
-    // iBufferIndex_CPI += 16
-    pBinary = BinaryOperator::Create(Instruction::Add, pLoadIndex, this->ConstantLong16, "iBufferIndex += 16",
-                                     InsertBefore);
-    pStore = new StoreInst(pBinary, this->iBufferIndex_CPI, false, InsertBefore);
-    pStore->setAlignment(8);
-}
-
 void LoopInstrumentor::InlineHookDelimit(Instruction *InsertBefore) {
 
     InlineSetRecord(this->ConstantLong0, this->ConstantInt0, this->ConstantInt1, InsertBefore);
-    InlineMemcpy(InsertBefore);
 }
 
 void LoopInstrumentor::InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore) {
@@ -1116,7 +1049,6 @@ void LoopInstrumentor::InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore
         CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
 
         InlineSetRecord(int64_address, const_length, this->ConstantInt2, InsertBefore);
-        InlineMemcpy(InsertBefore);
 
     } else {
         pLoad->dump();
@@ -1137,11 +1069,63 @@ void LoopInstrumentor::InlineHookStore(StoreInst *pStore, Instruction *InsertBef
         CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
 
         InlineSetRecord(int64_address, const_length, this->ConstantInt3, InsertBefore);
-        InlineMemcpy(InsertBefore);
 
     } else {
         pStore->dump();
         type_1->dump();
         assert(false);
     }
+}
+
+void LoopInstrumentor::InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore) {
+
+    LoadInst *pLoadPointer;
+    LoadInst *pLoadIndex;
+    BinaryOperator *pBinary;
+    CastInst *pCastInst;
+    PointerType *pPointerType;
+
+    // char *pc = (char *)pcBuffer_CPI[iBufferIndex_CPI];
+    pLoadPointer = new LoadInst(this->pcBuffer_CPI, "", false, InsertBefore);
+    pLoadPointer->setAlignment(8);
+    pLoadIndex = new LoadInst(this->iBufferIndex_CPI, "", false, InsertBefore);
+    pLoadIndex->setAlignment(8);
+    GetElementPtrInst *getElementPtr = GetElementPtrInst::Create(this->CharType, pLoadPointer, pLoadIndex, "",
+                                                                 InsertBefore);
+    // struct_stMemRecord *ps = (struct_stMemRecord *)pc;
+    pPointerType = PointerType::get(this->struct_stMemRecord, 0);
+    pCastInst = new BitCastInst(getElementPtr, pPointerType, "", InsertBefore);
+
+    // ps->address = address;
+    std::vector<Value *> ptr_address_indices;
+    ptr_address_indices.push_back(this->ConstantInt0);
+    ptr_address_indices.push_back(this->ConstantInt0);
+    GetElementPtrInst *pAddress = GetElementPtrInst::Create(this->struct_stMemRecord, pCastInst,
+                                                            ptr_address_indices, "", InsertBefore);
+    StoreInst *pStoreAddress = new StoreInst(address, pAddress, false, InsertBefore);
+    pStoreAddress->setAlignment(8);
+
+    // ps->length = length;
+    std::vector<Value *> ptr_length_indices;
+    ptr_length_indices.push_back(this->ConstantInt0);
+    ptr_length_indices.push_back(this->ConstantInt1);
+    GetElementPtrInst *pLength = GetElementPtrInst::Create(this->struct_stMemRecord, pCastInst,
+                                                           ptr_length_indices, "", InsertBefore);
+    StoreInst *pStoreLength = new StoreInst(length, pLength, false, InsertBefore);
+    pStoreLength->setAlignment(8);
+
+    // ps->flag = flag;
+    std::vector<Value *> ptr_flag_indices;
+    ptr_flag_indices.push_back(this->ConstantInt0);
+    ptr_flag_indices.push_back(this->ConstantInt2);
+    GetElementPtrInst *pFlag = GetElementPtrInst::Create(this->struct_stMemRecord, pCastInst, ptr_flag_indices,
+                                                         "", InsertBefore);
+    StoreInst *pStoreFlag = new StoreInst(flag, pFlag, false, InsertBefore);
+    pStoreFlag->setAlignment(4);
+
+    // iBufferIndex_CPI += 16
+    pBinary = BinaryOperator::Create(Instruction::Add, pLoadIndex, this->ConstantLong16, "iBufferIndex += 16",
+                                     InsertBefore);
+    StoreInst *pStoreIndex = new StoreInst(pBinary, this->iBufferIndex_CPI, false, InsertBefore);
+    pStoreIndex->setAlignment(8);
 }
