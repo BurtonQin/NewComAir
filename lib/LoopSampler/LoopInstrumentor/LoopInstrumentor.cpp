@@ -1030,6 +1030,53 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
             }
         }
     }
+
+    set<Instruction *>::iterator itMonInstBegin = setMonitoredInstInCallee.begin();
+    set<Instruction *>::iterator itMonInstEnd   = setMonitoredInstInCallee.end();
+
+    for(; itMonInstBegin != itMonInstEnd ; itMonInstBegin++ )
+    {
+        ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
+        assert(It != VCalleeMap.end());
+
+        Instruction *pInst = cast<Instruction>(It->second);
+        switch (pInst->getOpcode()) {
+            case Instruction::Load: {
+                Value *firstOperand = pInst->getOperand(0);
+                Type *firstOperandType = firstOperand->getType();
+
+                while (isa<PointerType>(firstOperandType)) {
+                    firstOperandType = firstOperandType->getContainedType(0);
+                }
+                if (!isa<FunctionType>(firstOperandType)) {
+                    if (LoadInst *pLoad = dyn_cast<LoadInst>(pInst)) {
+                        InlineHookLoad(pLoad, pInst + 1);
+                    }
+                }
+                break;
+            }
+            case Instruction::Store: {
+                Value *secondOperand = pInst->getOperand(0);
+                Type *secondOperandType = secondOperand->getType();
+
+                while (isa<PointerType>(secondOperandType)) {
+                    secondOperandType = secondOperandType->getContainedType(0);
+                }
+                if (!isa<FunctionType>(secondOperandType)) {
+                    if (StoreInst *pStore = dyn_cast<StoreInst>(pInst)) {
+                        InlineHookStore(pStore, pInst + 1);
+                    }
+                }
+                break;
+            }
+//                // TODO: memcpy, memmove
+//                case Instruction::MemoryOps: {
+//                    break;
+//                }
+            default:
+                break;
+        }
+    }
 }
 
 void LoopInstrumentor::InlineHookDelimit(Instruction *InsertBefore) {

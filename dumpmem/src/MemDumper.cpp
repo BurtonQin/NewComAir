@@ -37,11 +37,11 @@ int DumpSharedMemory() {
         exit(-1);
     }
 
-    FILE *pFile = fopen(g_LogFileName, "w");
-    if (pFile == NULL) {
-        fprintf(stderr, "file open failed: %s\n", strerror(errno));
-        exit(-1);
-    }
+//    FILE *pFile = fopen(g_LogFileName, "w");
+//    if (pFile == NULL) {
+//        fprintf(stderr, "file open failed: %s\n", strerror(errno));
+//        exit(-1);
+//    }
 
     // init to non-0
     record.flag = 1;
@@ -58,12 +58,12 @@ int DumpSharedMemory() {
 
     for (unsigned long i = 0; !endFlag; i += 16UL) {
         memcpy(&record, &pcBuffer[i], 16);
-        fprintf(pFile, "%lu, %u, %u\n", record.address, record.length, record.flag);
+        // fprintf(pFile, "%lu, %u, %u\n", record.address, record.length, record.flag);
         switch (record.flag) {
             case 1: { // delimit
                 // begin a new loop record
                 if (loopNum > 0) {
-                    printf("Loop: %u\n", loopNum);
+//                    printf("Loop: %u\n", loopNum);
                     for (auto &kv : one_loop_record) {
                         if (kv.second == 2) {
                             one_loop_distinct_addr.insert(kv.first);
@@ -72,8 +72,8 @@ int DumpSharedMemory() {
                     // calc
                     sumOfMiCi += all_distinct_addr.size() * one_loop_distinct_addr.size();
 
-                    printf("sumOfMiCi: %lu, Mi: %lu, Ci: %lu\n", sumOfMiCi, all_distinct_addr.size(),
-                           one_loop_distinct_addr.size());
+//                    printf("sumOfMiCi: %lu, Mi: %lu, Ci: %lu\n", sumOfMiCi, all_distinct_addr.size(),
+//                           one_loop_distinct_addr.size());
 
                     std::set<unsigned long> intersect;
                     std::set_intersection(all_distinct_addr.begin(), all_distinct_addr.end(),
@@ -81,7 +81,7 @@ int DumpSharedMemory() {
                                           std::inserter(intersect, intersect.begin()));
                     sumOfRi += intersect.size();
 
-                    printf("sumOfRi: %lu, Ri: %lu\n", sumOfRi, intersect.size());
+//                    printf("sumOfRi: %lu, Ri: %lu\n", sumOfRi, intersect.size());
 
                     // merge
                     all_distinct_addr.insert(one_loop_distinct_addr.begin(), one_loop_distinct_addr.end());
@@ -115,7 +115,7 @@ int DumpSharedMemory() {
             default:  // others
                 endFlag = true;
                 if (loopNum > 0) {
-                    printf("Loop: %u\n", loopNum);
+//                    printf("Loop: %u\n", loopNum);
                     for (auto &kv : one_loop_record) {
                         if (kv.second == 2) {
                             one_loop_distinct_addr.insert(kv.first);
@@ -124,8 +124,8 @@ int DumpSharedMemory() {
                     // calc
                     sumOfMiCi += all_distinct_addr.size() * one_loop_distinct_addr.size();
 
-                    printf("sumOfMiCi: %lu, Mi: %lu, Ci: %lu\n", sumOfMiCi, all_distinct_addr.size(),
-                           one_loop_distinct_addr.size());
+//                    printf("sumOfMiCi: %lu, Mi: %lu, Ci: %lu\n", sumOfMiCi, all_distinct_addr.size(),
+//                           one_loop_distinct_addr.size());
 
                     std::set<unsigned long> intersect;
                     std::set_intersection(all_distinct_addr.begin(), all_distinct_addr.end(),
@@ -133,7 +133,7 @@ int DumpSharedMemory() {
                                           std::inserter(intersect, intersect.begin()));
                     sumOfRi += intersect.size();
 
-                    printf("sumOfRi: %lu, Ri: %lu\n", sumOfRi, intersect.size());
+//                    printf("sumOfRi: %lu, Ri: %lu\n", sumOfRi, intersect.size());
 
                     // merge
                     all_distinct_addr.insert(one_loop_distinct_addr.begin(), one_loop_distinct_addr.end());
@@ -142,18 +142,21 @@ int DumpSharedMemory() {
                     one_loop_record.clear();
                     one_loop_distinct_addr.clear();
                 }
-                printf("end\n");
+//                printf("end\n");
                 break;
         }
     }
 
     if (sumOfRi == 0) {
-        printf("sumOfMiCi=%u, sumOfRi=%u\n", sumOfMiCi, sumOfRi);
+//        printf("sumOfMiCi=%u, sumOfRi=%u\n", sumOfMiCi, sumOfRi);
+        printf("%u\n", 0);
     } else {
-        printf("sumOfMiCi=%u, sumOfRi=%u, N=%u\n", sumOfMiCi, sumOfRi, sumOfMiCi / sumOfRi);
+//        printf("sumOfMiCi=%u, sumOfRi=%u, N=%u\n", sumOfMiCi, sumOfRi, sumOfMiCi / sumOfRi);
+        printf("%u\n", sumOfMiCi/sumOfRi);
     }
 
-    fclose(pFile);
+    // fclose(pFile);
+    // shm_unlink(g_LogFileName);
     close(fd);
 
     return 0;

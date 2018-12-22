@@ -1,38 +1,45 @@
+OP_LEVEL=0
+BELSEIF=-bElseIf
+
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
-OP_CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
+OP_CFLAGS=-O${OP_LEVEL} -Xclang -disable-O0-optnone -g -flto
 LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
+TARGET=target.clonesample.O${OP_LEVEL}${BELSEIF}
 
-TARGET=target.clonesample
+PROJECT_DIR=/home/boqin/Projects/NewComAir/
+BUILD_DIR=${PROJECT_DIR}cmake-build-debug/
+LIB_DIR=${BUILD_DIR}lib/
+ID_PASS=${LIB_DIR}IDAssigner/libIDAssignerPass.so
+LOOP_INSTRUMENT_PASS=${LIB_DIR}LoopSampler/LoopInstrumentor/libLoopInstrumentPass.so
+COMMON_LIB=${LIB_DIR}Common/libCommonLib.a
+RUNTIME_DIR=${BUILD_DIR}runtime/
+RUNTIME_LIB=${RUNTIME_DIR}libRuntimeLib.a
+BUG_DIR=${PROJECT_DIR}stubs/apache34464/
+INSTALL_DIR=${BUG_DIR}targets.O${OP_LEVEL}/
+SRC_FILE=${PROJECT_DIR}stubs/apache34464/Telnet.c
 
-HOME_DIR=/home/boqin/Projects/NewComAir/
-BUILD_DIR=${HOME_DIR}/cmake-build-debug/
-LIB_DIR=${BUILD_DIR}/lib/
-RUNTIME_DIR=${BUILD_DIR}/runtime/
-ID_PASS=${LIB_DIR}/IDAssigner/libIDAssignerPass.so
-LOOP_INSTRUMENT_PASS=${LIB_DIR}/LoopSampler/LoopInstrumentor/libLoopInstrumentPass.so
-COMMON_LIB=${LIB_DIR}/Common/libCommonLib.a
-RUNTIME_LIB=${RUNTIME_DIR}/libRuntimeLib.a
-SRC_FILE=${HOME_DIR}/stubs/apache34464/Telnet.c
+.PHONY: clean install
 
-all: ${TARGET}
+${TARGET}: ${TARGET}.lalls.bc ${RUNTIME_LIB}
+	${CXX} ${OP_CFLAGS} ${LDFLAGS} $< -l${RUNTIME_LIB} -lm -lrt -o $@
 
-${TARGET}: target.lalls.bc
-	${CXX} ${OP_CFLAGS} ${LDFLAGS} target.lalls.bc -l${RUNTIME_LIB} -lm -lrt -o ${TARGET}
-
-target.lalls.bc: target.bc.id
+${TARGET}.lalls.bc: ${TARGET}.bc.id ${LOOP_INSTRUMENT_PASS} ${SRC_FILE}
 	opt -load ${LOOP_INSTRUMENT_PASS} -loop-instrument \
 	 -noLine 103 -strFile ${SRC_FILE} \
-	 -strFunc indexOf target.bc.id > target.lalls.bc
+	 -strFunc indexOf ${BELSEIF} $< > $@
 
-target.bc.id: target.ls.bc
-	opt -load ${ID_PASS} -tag-id $^ > $@
+${TARGET}.bc.id: ${TARGET}.ls.bc ${ID_PASS}
+	opt -load ${ID_PASS} -tag-id $< > $@
 
-target.ls.bc: target.bc
-	opt -loop-simplify target.bc > target.ls.bc
+${TARGET}.ls.bc: ${TARGET}.bc
+	opt -loop-simplify $< > $@
 
-target.bc: ${SRC_FILE}
-	${CXX} ${CFLAGS} ${SRC_FILE} -c -o target.bc
+${TARGET}.bc: ${SRC_FILE}
+	${CXX} ${CFLAGS} $< -c -o $@
+
+install: ${TARGET}
+	mv ${TARGET} ${INSTALL_DIR}
 
 clean:
-	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id target.aprof *.ll *.aprof *.inline *.txt *.lalls
+	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id ${TARGET}.aprof *.ll *.aprof *.inline *.txt *.lalls
