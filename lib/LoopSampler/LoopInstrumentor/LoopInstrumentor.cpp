@@ -447,8 +447,9 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
         CreateIfElseIfBlock(pInnerLoop, vecAdd);
     }
 
+    vector<Instruction *> notInstrumentedOriginal;
     // inline numLocalCost to function
-    InlineNumLocalCost(pInnerLoop);
+    InlineNumLocalCost(pInnerLoop, notInstrumentedOriginal);
 
     // clone loop
     ValueToValueMapTy VMap;
@@ -456,8 +457,18 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
 
     CloneInnerLoop(pInnerLoop, vecAdd, VMap, vecCloned);
 
+    vector<Instruction *> notInstrumentedCloned;
+    for (Instruction *pInst : notInstrumentedOriginal) {
+        if (VMap.find(pInst) != VMap.end()){
+            Instruction *pInstCloned = cast<Instruction>(VMap[pInst]);
+            if (pInstCloned) {
+                notInstrumentedCloned.push_back(pInstCloned);
+            }
+        }
+    }
+
     // instrument RecordMemHooks to clone loop
-    InstrumentRecordMemHooks(vecCloned);
+    InstrumentRecordMemHooks(vecCloned, notInstrumentedCloned);
 
     // inline delimit
     BasicBlock *pClonedBody = vecAdd[2];
@@ -717,7 +728,7 @@ void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBl
     vecAdded.push_back(pElseBody);
 }
 
-void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
+void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& notInstrumentedOriginal) {
 
     // int numLocalCost = 0;  // function.entry
     // numLocalCost++;  // loop.header
@@ -733,6 +744,9 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
     StoreInst *pStore = new StoreInst(this->ConstantInt0, pAlloc, false, pFirst);
     pStore->setAlignment(4);
 
+    notInstrumentedOriginal.push_back(pAlloc);
+    notInstrumentedOriginal.push_back(pStore);
+
     // numLocalCost++;  // loop.header
     BasicBlock *pHeader = pLoop->getHeader();
     Instruction *pHeaderFirst = pHeader->getFirstNonPHI();
@@ -743,6 +757,11 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
     StoreInst *pStoreAdd = new StoreInst(pBinary, pAlloc, false, pHeaderFirst);
     pStoreAdd->setAlignment(4);
 
+    // do not instrument numLocalCost++
+    notInstrumentedOriginal.push_back(pLoad);
+    notInstrumentedOriginal.push_back(pStoreAdd);
+
+    // numGlobalCost += numLocalCost;  // function.return
     for (auto BB = pFunction->begin(); BB != pFunction->end(); BB++) {
         for (auto II = BB->begin(); II != BB->end(); II++) {
             if (II->getOpcode() == Instruction::Ret) {
@@ -754,6 +773,11 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
 
                 StoreInst *pStore = new StoreInst(pBinary, this->numGlobalCost, false, pInst);
                 pStore->setAlignment(4);
+
+                notInstrumentedOriginal.push_back(pNumLocalCost);
+                notInstrumentedOriginal.push_back(pNumGlobalCost);
+                notInstrumentedOriginal.push_back(pBinary);
+                notInstrumentedOriginal.push_back(pStore);
             }
         }
     }
@@ -914,13 +938,17 @@ void LoopInstrumentor::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap)
     }
 }
 
-void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned) {
+void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned, std::vector<Instruction *> &notInstrumented) {
 
     for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
 
         BasicBlock *pBB = *BB;
         for (BasicBlock::iterator II = pBB->begin(); II != pBB->end(); II++) {
             Instruction *pInst = &*II;
+
+            if (std::find(notInstrumented.begin(), notInstrumented.end(), pInst) != notInstrumented.end()) {
+                continue;
+            }
 
             switch (pInst->getOpcode()) {
                 case Instruction::Load: {

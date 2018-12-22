@@ -21,7 +21,7 @@ ${TARGET}.bc: ${SRC_FILE}
 	${CXX} ${CFLAGS} $< -c -o $@
 
 install: ${TARGET}
-	mv ${TARGET} ${INSTALL_DIR}
+	cp ${TARGET} ${INSTALL_DIR}
 
 clean:
 	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id target.aprof *.ll *.aprof *.inline *.txt *.lalls

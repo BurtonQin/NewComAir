@@ -1,7 +1,7 @@
 OP_LEVEL=0
 #OP_LEVEL=2
-#BELSEIF=-bElseIf
 BELSEIF=
+#BELSEIF=-bElseIf
 
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
@@ -42,7 +42,7 @@ ${TARGET}.bc: ${SRC_FILE}
 	${CXX} ${CFLAGS} $< -c -o $@
 
 install: ${TARGET}
-	mv ${TARGET} ${INSTALL_DIR}
+	cp ${TARGET} ${INSTALL_DIR}
 
 clean:
 	rm -rf *.o ${TARGET} ${TARGET}.opt *.bc *.resolution.txt *.id ${TARGET}.aprof *.ll *.aprof *.inline *.txt *.lalls

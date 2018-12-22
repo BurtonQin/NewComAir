@@ -1,19 +1,21 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 '''
 compare runtime of targets
 '''
 
+import argparse
 import os
-import stat
-from subprocess import call
-import time
-import string
-
 import pandas as pd
-#from pylab import * from scipy.optimize import curve_fit
-
+from pathlib import Path
+import subprocess
+import time
+try:
+    from subprocess import DEVNULL # py3k
+except ImportError:
+    import os
+    DEVNULL = open(os.devnull, 'wb')
 
 CASE_NAME = './inputs/input_case_{0}.txt'
 CONSTANT_SONG = 'song'
@@ -29,161 +31,109 @@ def generate_input(i):
 
 	return file_name
 
-# Gen sh: target file_name song, exec and record runtime.
+
+# exec 'target file_name song' and record runtime.
 # @param target: the exe file, used to test runtime
 # @param result: the result file, store runtime results
-def run_time_command(target, result):
+def run_time_command(target, result, my_env=None):
 	
 	inputs = []
 	exe_times = []
-	#for i in range(5000, 55000, 5000):
-	#for i in range(5000, 55000, 1000):
+	i = 5000
 	for x in range(20):
-		i = 5000
-		file_name = generate_input(i)
-		command = [target, ' ', file_name, ' ', CONSTANT_SONG]
-		with open('test.sh', 'w') as run_script:
-			run_script.writelines(command)
-			st = os.stat('test.sh')
-			os.chmod('test.sh', st.st_mode | stat.S_IEXEC)
 		inputs.append(i)
+		file_name = generate_input(i)
+		command = [target, file_name, CONSTANT_SONG]
 		start = time.time()
-		call(['/bin/bash', 'test.sh'])
+		if my_env:
+			subprocess.run(command, stdout=DEVNULL, env=my_env, check=True)
+		else:
+			subprocess.run(command, stdout=DEVNULL, check=True)
 		exe_times.append('%.5f' % (time.time() - start))
-
-	# delete temp test.sh
-	os.remove('test.sh')
 
 	df = pd.DataFrame(data={'inputs': inputs, 'time': exe_times})
 	df.to_csv(result, index=False)
 
-def polyfit(x, y, degree):
-    results = {}
-    coeffs = np.polyfit(x, y, degree)
-    results['polynomial'] = coeffs.tolist()
-
-    # r-squared
-    p = np.poly1d(coeffs)
-    # fit values, and mean
-    yhat = p(x)                         # or [p(z) for z in x]
-    ybar = np.sum(y)/len(y)          # or sum(y)/len(y)
-    ssreg = np.sum((yhat-ybar)**2)   # or sum([ (yihat - ybar)**2 for yihat in yhat])
-    sstot = np.sum((y - ybar)**2)    # or sum([ (yi - ybar)**2 for yi in y])
-    results['determination'] = ssreg / sstot  # 准确率
-    return results
+	sum = 0.0
+	for t in exe_times:
+		sum += float(t)
+	print('%.5f' % (sum/len(exe_times)))
 
 
-def calculate_curve_fit(result):
-    """
-    calculate the expression of target function
-    :return:
-    """
-    df = pd.read_csv(result)
-    xdata = df[['inputs']].apply(pd.to_numeric)
-    ydata = df[['time']].apply(pd.to_numeric)
+# cd build; make -f ../Makefile.clonesample OP_LEVEL=2 ELSEIF=-bElseIf install; cd ..
+# @param nopass: nopass instead of clonesample
+# @param O: op level
+# @param bElseIf: if-elseif-else instead of if-else
+def build_and_install(nopass, O, bElseIf):
+	
+	path = './build'
+	Path(path).mkdir(exist_ok=True)
+	
+	prev_cwd = Path.cwd()
+	os.chdir(path)
+	if nopass:
+		makefile_suffix = '.nopass'
+	else:
+		makefile_suffix = '.clonesample'
+	
+	make_O = 'OP_LEVEL=' + str(O)
 
-    xdata = [item[0] for item in xdata.values]
-    ydata = [item[0] - 4 for item in ydata.values]
+	if bElseIf:
+		make_bElseIf = 'BELSEIF=-bElseIf'
+	else:
+		make_bElseIf = 'BELSEIF='
+		
+	#subprocess.run(['make', '-f', '../Makefile' + makefile_suffix, make_O, make_bElseIf, 'install'], stdout=DEVNULL, check=True)
+	subprocess.run(['make', '-f', '../Makefile' + makefile_suffix, make_O, make_bElseIf, 'install'], check=True)
+	os.chdir(prev_cwd)
+	
 
-    # print y = x^a +/- b
-    z1 = polyfit(xdata, ydata, 2)
-    print(z1)
+# run and record time in result, print avg
+# @param nopass: nopass instead of clonesample
+# @param O: op level
+# @param bElseIf: if-elseif-else instead of if-else
+def run_get_time(nopass, O, bElseIf):
 
-    from scipy import stats
-    xdata = stats.zscore(xdata)
-    ydata = stats.zscore(ydata)
-    z1 = polyfit(xdata, ydata, 2)
-    print(z1)
+	target_dir = './targets.O' + str(O)
+	result_dir = './results.O' + str(O)
 
-# plot:
-def plot(result, picture):
-    df = pd.read_csv(result)
-    # xdata = df[['inputs']].apply(pd.to_numeric)
-    # ydata = df[['time']].apply(pd.to_numeric)
-    matplotlib.rcParams.update({'font.size': 30})
+	if nopass:
+		target_suffix = 'nopass'
+	else:
+		target_suffix = 'clonesample'
 
-    # x轴的label
-    xlabel('input size', fontsize=30, labelpad=2)
+	target_suffix += '.O' + str(O)
 
-    # y轴的label
-    ylabel(r'time cost(s)', fontsize=30, labelpad=5)
-    # df['time'] = df['time'].apply(lambda y: 1000 * y)
-    # Create plots with pre-defined labels.
-    plt.scatter(df['inputs'], df['time'], marker='o', s=50)
+	if not nopass:
+		if bElseIf:
+			target_suffix += '-bElseIf'
+			sample_rate = 200
+		else:
+			sample_rate = 100
 
-    grid(True)
-    xgridlines = getp(gca(), 'xgridlines')
-    ygridlines = getp(gca(), 'ygridlines')
-    setp(xgridlines, 'linestyle', ':')
-    setp(ygridlines, 'linestyle', ':')
+		my_env = os.environ.copy()
+		my_env['SAMPLE_RATE'] = str(sample_rate)
 
-    legend = plt.legend(loc='upper center', shadow=False, fontsize='22', numpoints=1)
+		target = os.path.join(target_dir, 'target.' + target_suffix)
+		result = os.path.join(result_dir, 'result.' + target_suffix + '.csv')
 
-    # Put a nicer background color on the legend.
-    legend.get_frame().set_facecolor('#FFFFFF')
+		run_time_command(target, result, my_env)
+	else:
+		target = os.path.join(target_dir, 'target.' + target_suffix)
+		result = os.path.join(result_dir, 'result.' + target_suffix + '.csv')
 
-    fig = plt.gcf()
-
-    plt.subplots_adjust(left=0.2, right=0.95, top=0.93, bottom=0.2)
-    fig.set_size_inches(8, 8)
-
-    # fig.suptitle('Cost plot (apache34464:WaitForString)', fontsize=10)
-    fig.savefig(picture, dpi=300)
-    plt.show()
-
-def plot_multi(result, result1, result2, result3,  picture):
-    df = pd.read_csv(result)
-    df1 = pd.read_csv(result1)
-    df2 = pd.read_csv(result2)
-    df3 = pd.read_csv(result3)
-    # xdata = df[['inputs']].apply(pd.to_numeric)
-    # ydata = df[['time']].apply(pd.to_numeric)
-    matplotlib.rcParams.update({'font.size': 30})
-
-    # x轴的label
-    xlabel('input size', fontsize=30, labelpad=2)
-
-    # y轴的label
-    ylabel(r'time cost(s)', fontsize=30, labelpad=5)
-    # df['time'] = df['time'].apply(lambda y: 1000 * y)
-    # Create plots with pre-defined labels.
-    plt.scatter(df['inputs'], df['time'], marker='o', s=50, color='r', label='no pass')
-    plt.scatter(df1['inputs'], df1['time'], marker='o', s=50, color='g', label='original pass')
-    plt.scatter(df2['inputs'], df2['time'], marker='o', s=50, color='b', label='empty pass')
-    plt.scatter(df3['inputs'], df3['time'], marker='o', s=50, color='y', label='clonesample pass')
-    plt.legend()
-
-    grid(True)
-    xgridlines = getp(gca(), 'xgridlines')
-    ygridlines = getp(gca(), 'ygridlines')
-    setp(xgridlines, 'linestyle', ':')
-    setp(ygridlines, 'linestyle', ':')
-
-    # legend = plt.legend(loc='upper center', shadow=False, fontsize='22', numpoints=1)
-
-    # Put a nicer background color on the legend.
-    # legend.get_frame().set_facecolor('#FFFFFF')
-
-    fig = plt.gcf()
-
-    plt.subplots_adjust(left=0.2, right=0.95, top=0.93, bottom=0.2)
-    fig.set_size_inches(8, 8)
-
-    # fig.suptitle('Cost plot (apache34464:WaitForString)', fontsize=10)
-    fig.savefig(picture, dpi=300)
-    plt.show()
+		run_time_command(target, result)
+	
 
 if __name__ == '__main__':
 
-	op_level = "0"
-	#opt_level = "2"
-	#bElseIf = "-bElseIf"
-	bElseIf = ""
-
-	target_dir = './targets.O' + op_level + '/'
-	result_dir = './results.O' + op_level + '/'
-
-	nopass = 'target.nopass.O' + op_level
-	clonesample = 'target.clonesample.O' + op_level + bElseIf
-	run_time_command(target_dir + nopass, result_dir + nopass + '.csv')	
-	run_time_command(target_dir + clonesample, result_dir + clonesample + '.csv')
+	parser = argparse.ArgumentParser()
+	parser.add_argument("-onlyrun", help="no build, only run", action="store_true")
+	parser.add_argument("-nopass", help="use nopass instead of clonesample", action="store_true")
+	parser.add_argument("-O", help="opt level", type=int, default=0)
+	parser.add_argument("-bElseIf", help="use if-elseif-else instead of if-else", action="store_true")
+	args = parser.parse_args()
+	
+	if (not args.onlyrun):
+		build_and_install(args.nopass, args.O, args.bElseIf)
+	run_get_time(args.nopass, args.O, args.bElseIf)

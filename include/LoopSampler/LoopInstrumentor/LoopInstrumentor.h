@@ -51,13 +51,13 @@ private:
     // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
-    void InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecAdd);
+    void InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned, std::vector<Instruction *> &notInstrumented);
 
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap, std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
     void InstrumentMain();
 
-    void InlineNumLocalCost(Loop *pLoop);
+    void InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& notInstrumentedOriginal);
 
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
     void InlineHookDelimit(Instruction *InsertBefore);
