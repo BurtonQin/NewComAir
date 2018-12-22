@@ -155,7 +155,7 @@ void LoopInstrumentor::SetupGlobals() {
     // char *pRecord_CPI = (char *)&Record_CPI;
     this->ConstantPtrRecord = ConstantExpr::getCast(Instruction::BitCast, this->Record_CPI, this->CharStarType);
 
-    // const char *SAMPLE_RATE_ptr = "SAMPLE_RATE"
+    // const char *SAMPLE_RATE_ptr = "SAMPLE_RATE";
     ArrayType *ArrayTy12 = ArrayType::get(this->CharType, 12);
     GlobalVariable *pArrayStr = new GlobalVariable(*pModule, ArrayTy12, true, GlobalValue::PrivateLinkage, 0, "");
     pArrayStr->setAlignment(1);
@@ -165,6 +165,13 @@ void LoopInstrumentor::SetupGlobals() {
     vecIndex.push_back(this->ConstantInt0);
     this->SAMPLE_RATE_ptr = ConstantExpr::getGetElementPtr(ArrayTy12, pArrayStr, vecIndex);
     pArrayStr->setInitializer(ConstArray);
+
+    // long numGlobalCost = 0;
+    assert(pModule->getGlobalVariable("numGlobalCost") == NULL);
+    this->numGlobalCost = new GlobalVariable(*pModule, this->IntType, false, GlobalValue::ExternalLinkage, 0,
+                                                "numGlobalCost");
+    this->numGlobalCost->setAlignment(4);
+    this->numGlobalCost->setInitializer(this->ConstantInt0);
 }
 
 void LoopInstrumentor::SetupFunctions() {
@@ -363,6 +370,9 @@ void LoopInstrumentor::InstrumentMain() {
                 pCall->setTailCall(false);
                 pCall->setAttributes(emptyList);
 
+                // Output numGlobalCost before return.
+                InlineOutputCost(pRet);
+
             } else if (isa<CallInst>(II) || isa<InvokeInst>(II)) {
                 CallSite cs(&*II);
                 Function *pCalled = cs.getCalledFunction();
@@ -372,10 +382,15 @@ void LoopInstrumentor::InstrumentMain() {
                 // Instrument FinalizeMemHooks before calling exit or functions similar to exit.
                 // TODO: any other functions similar to exit?
                 if (pCalled->getName() == "exit" || pCalled->getName() == "_ZL9mysql_endi") {
+                    LoadInst *pLoad = new LoadInst(this->iBufferIndex_CPI, "", false, pRet);
+                    pLoad->setAlignment(8);
                     pCall = CallInst::Create(this->FinalizeMemHooks, "", &*II);
                     pCall->setCallingConv(CallingConv::C);
                     pCall->setTailCall(false);
                     pCall->setAttributes(emptyList);
+
+                    // Output numGlobalCost before exit.
+                    InlineOutputCost(pRet);
                 }
             }
         }
@@ -431,6 +446,9 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
     } else {
         CreateIfElseIfBlock(pInnerLoop, vecAdd);
     }
+
+    // inline numLocalCost to function
+    InlineNumLocalCost(pInnerLoop);
 
     // clone loop
     ValueToValueMapTy VMap;
@@ -697,6 +715,48 @@ void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBl
     vecAdded.push_back(pCondition2);
     vecAdded.push_back(pElseIfBody);
     vecAdded.push_back(pElseBody);
+}
+
+void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
+
+    // int numLocalCost = 0;  // function.entry
+    // numLocalCost++;  // loop.header
+    // numGlobalCost += numLocalCost;  // function.return
+
+    Function *pFunction = pLoop->getHeader()->getParent();
+
+    // int numLocalCost = 0;  // function.entry
+    BasicBlock *pEntry = &(pFunction->getEntryBlock());
+    Instruction *pFirst = pEntry->getFirstNonPHI();
+
+    AllocaInst *pAlloc = new AllocaInst(this->IntType, 0, "numLocalCost", pFirst);
+    StoreInst *pStore = new StoreInst(this->ConstantInt0, pAlloc, false, pFirst);
+    pStore->setAlignment(4);
+
+    // numLocalCost++;  // loop.header
+    BasicBlock *pHeader = pLoop->getHeader();
+    Instruction *pHeaderFirst = pHeader->getFirstNonPHI();
+
+    LoadInst *pLoad = new LoadInst(pAlloc, "", false, pHeaderFirst);
+    BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pLoad, this->ConstantInt1, "numLocalCost++",
+                                     pHeaderFirst);
+    StoreInst *pStoreAdd = new StoreInst(pBinary, pAlloc, false, pHeaderFirst);
+    pStoreAdd->setAlignment(4);
+
+    for (auto BB = pFunction->begin(); BB != pFunction->end(); BB++) {
+        for (auto II = BB->begin(); II != BB->end(); II++) {
+            if (II->getOpcode() == Instruction::Ret) {
+                Instruction *pInst = &*II;
+                LoadInst *pNumLocalCost = new LoadInst(pAlloc, "", false, pInst);
+                LoadInst *pNumGlobalCost = new LoadInst(this->numGlobalCost, "", false, pInst);
+
+                BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pNumLocalCost, pNumGlobalCost, "numGlobalCost+=numLocalCost", pInst);
+
+                StoreInst *pStore = new StoreInst(pBinary, this->numGlobalCost, false, pInst);
+                pStore->setAlignment(4);
+            }
+        }
+    }
 }
 
 void LoopInstrumentor::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
@@ -1050,7 +1110,7 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
                 }
                 if (!isa<FunctionType>(firstOperandType)) {
                     if (LoadInst *pLoad = dyn_cast<LoadInst>(pInst)) {
-                        InlineHookLoad(pLoad, pInst + 1);
+                        InlineHookLoad(pLoad, pInst);
                     }
                 }
                 break;
@@ -1064,7 +1124,7 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
                 }
                 if (!isa<FunctionType>(secondOperandType)) {
                     if (StoreInst *pStore = dyn_cast<StoreInst>(pInst)) {
-                        InlineHookStore(pStore, pInst + 1);
+                        InlineHookStore(pStore, pInst);
                     }
                 }
                 break;
@@ -1122,6 +1182,13 @@ void LoopInstrumentor::InlineHookStore(StoreInst *pStore, Instruction *InsertBef
         type_1->dump();
         assert(false);
     }
+}
+
+// Cost Record Format: (0, numGlobalCost, 0)
+void LoopInstrumentor::InlineOutputCost(Instruction *InsertBefore) {
+
+    LoadInst *pLoad = new LoadInst(this->numGlobalCost, "", false, InsertBefore);
+    InlineSetRecord(this->ConstantLong0, pLoad, this->ConstantInt0, InsertBefore);
 }
 
 void LoopInstrumentor::InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore) {

@@ -57,10 +57,13 @@ private:
 
     void InstrumentMain();
 
+    void InlineNumLocalCost(Loop *pLoop);
+
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
     void InlineHookDelimit(Instruction *InsertBefore);
     void InlineHookStore(StoreInst *pStore, Instruction *InsertBefore);
     void InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore);
+    void InlineOutputCost(Instruction *InsertBefore);
 
     /* Module */
     Module *pModule;
@@ -87,11 +90,11 @@ private:
     /* Global Variable */
     GlobalVariable *SAMPLE_RATE;
     GlobalVariable *numGlobalCounter;
+    GlobalVariable *numGlobalCost;
     GlobalVariable *Record_CPI;
-    GlobalVariable *Records_CPI;
     GlobalVariable *pcBuffer_CPI;
     GlobalVariable *iBufferIndex_CPI;
-    GlobalVariable *iRecordIndex_CPI;
+
     /* ***** */
 
     /* ***** */

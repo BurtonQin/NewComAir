@@ -1,9 +1,12 @@
 OP_LEVEL=0
-BELSEIF=-bElseIf
+#OP_LEVEL=2
+#BELSEIF=-bElseIf
+BELSEIF=
 
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
 OP_CFLAGS=-O${OP_LEVEL} -Xclang -disable-O0-optnone -g -flto
+# -fno-vectorize -fno-slp-vectorize
 LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
 TARGET=target.clonesample.O${OP_LEVEL}${BELSEIF}
 

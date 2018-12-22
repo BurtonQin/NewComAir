@@ -3,6 +3,7 @@ OP_LEVEL=0
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
 OP_CFLAGS=-O${OP_LEVEL} -Xclang -disable-O0-optnone -g -flto
+#-fno-vectorize -fno-slp-vectorize
 LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
 TARGET=target.nopass.O${OP_LEVEL}
 

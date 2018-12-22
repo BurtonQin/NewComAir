@@ -175,33 +175,15 @@ def plot_multi(result, result1, result2, result3,  picture):
 
 if __name__ == '__main__':
 
-	opt_level = "0"
+	op_level = "0"
 	#opt_level = "2"
 	#bElseIf = "-bElseIf"
 	bElseIf = ""
 
-	target_dir = './targets.O' + opt_level + '/'
-	result_dir = './results.O' + opt_level + '/'
+	target_dir = './targets.O' + op_level + '/'
+	result_dir = './results.O' + op_level + '/'
 
-	nopass = 'target.nopass'
-	original = 'target.lalls'
-	clonesample = 'target.clonesample.O' + opt_level + bElseIf
-	#clonesample2 = 'target.clonesample2'
-	#openshmem = 'target.openshmem'
-
+	nopass = 'target.nopass.O' + op_level
+	clonesample = 'target.clonesample.O' + op_level + bElseIf
 	run_time_command(target_dir + nopass, result_dir + nopass + '.csv')	
-#	run_time_command(target_O2_dir + nopass, result_O2_dir + nopass + '.csv')
-#
-#	run_time_command(target_O0_dir + original, result_O0_dir + original + '.csv')
-#	run_time_command(target_O2_dir + original, result_O2_dir + original + '.csv')
-#
 	run_time_command(target_dir + clonesample, result_dir + clonesample + '.csv')
-#	run_time_command(target_O2_dir + clonesample, result_O2_dir + clonesample + '.csv')
-#
-#	run_time_command(target_O0_dir + clonesample2, result_O0_dir + clonesample2 + '.csv')
-#	run_time_command(target_O2_dir + clonesample2, result_O2_dir + clonesample2 + '.csv')
-#
-	#run_time_command(target_O0_dir + openshmem, result_O0_dir + openshmem + '.csv')
-	#run_time_command(target_O2_dir + openshmem, result_O2_dir + openshmem + '.csv')
-
-	#plot_multi('exe_time.csv', 'exe_time.lalls.csv', 'exe_time.empty.csv', 'exe_time.clonesample.csv', 'time-plot.png')
