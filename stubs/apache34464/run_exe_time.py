@@ -36,6 +36,8 @@ def generate_input(i):
 # @param target: the exe file, used to test runtime
 # @param result: the result file, store runtime results
 def run_time_command(target, result, my_env=None):
+
+	print(target)
 	
 	inputs = []
 	exe_times = []
@@ -83,8 +85,7 @@ def build_and_install(nopass, O, bElseIf):
 	else:
 		make_bElseIf = 'BELSEIF='
 		
-	#subprocess.run(['make', '-f', '../Makefile' + makefile_suffix, make_O, make_bElseIf, 'install'], stdout=DEVNULL, check=True)
-	subprocess.run(['make', '-f', '../Makefile' + makefile_suffix, make_O, make_bElseIf, 'install'], check=True)
+	subprocess.run(['make', '-f', '../Makefile' + makefile_suffix, make_O, make_bElseIf, 'install'], stdout=DEVNULL, check=True)
 	os.chdir(prev_cwd)
 	
 
