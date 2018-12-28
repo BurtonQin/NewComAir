@@ -40,7 +40,7 @@ private:
 
     void SetupFunctions();
 
-    void InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT);
+    void InstrumentInnerLoop(Loop *pInnerLoop);
 
     void CreateIfElseBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
 
@@ -61,8 +61,8 @@ private:
 
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
     void InlineHookDelimit(Instruction *InsertBefore);
-    void InlineHookStore(StoreInst *pStore, Instruction *InsertBefore);
-    void InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore);
+    void InlineHookStore(Value *addr, Type *type1, Instruction *InsertBefore);
+    void InlineHookLoad(Value *addr, Type *type1, Instruction *InsertBefore);
     void InlineOutputCost(Instruction *InsertBefore);
 
     /* Module */
@@ -156,7 +156,6 @@ private:
     Constant *ConstantRecordLength;
     Constant *ConstantRecordFlag;
     /* ********** */
-
 };
 
 #endif //NEWCOMAIR_LOOPINSTRUMENT_H

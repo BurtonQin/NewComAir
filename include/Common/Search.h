@@ -19,4 +19,6 @@ void SearchBasicBlocksByLineNo(Function *F, unsigned uLineNo, vector<BasicBlock 
 
 Loop *SearchLoopByLineNo(Function *pFunction, LoopInfo *pLI, unsigned uLineNo);
 
+Loop *SearchLoopInBBs(Function *pFunction, LoopInfo *pLI, vector<BasicBlock *> &vecBasicBlocks);
+
 #endif //COMAIR_SEARCH_H

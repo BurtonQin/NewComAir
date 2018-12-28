@@ -2,6 +2,7 @@
 // Clonesample Pass demo.
 //
 
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -16,6 +17,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -23,6 +25,7 @@
 #include "Common/ArrayLinkedIndentifier.h"
 #include "Common/Constant.h"
 #include "Common/Loop.h"
+#include "Common/Search.h"
 
 #include <stdlib.h>
 
@@ -51,12 +54,16 @@ char LoopInstrumentor::ID = 0;
 
 void LoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
+    AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<AAResultsWrapperPass>();
 }
 
 LoopInstrumentor::LoopInstrumentor() : ModulePass(ID) {
     PassRegistry &Registry = *PassRegistry::getPassRegistry();
+    initializeDominatorTreeWrapperPassPass(Registry);
     initializeLoopInfoWrapperPassPass(Registry);
+    initializeAAResultsWrapperPassPass(Registry);
 }
 
 void LoopInstrumentor::SetupTypes() {
@@ -421,12 +428,12 @@ bool LoopInstrumentor::runOnModule(Module &M) {
     Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
 
     InstrumentMain();
-    InstrumentInnerLoop(pLoop, NULL);
+    InstrumentInnerLoop(pLoop);
 
     return false;
 }
 
-void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *PDT) {
+void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop) {
 
     set<BasicBlock *> setBlocksInLoop;
     for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
@@ -437,7 +444,7 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, PostDominatorTree *
     map<Function *, set<Instruction *> > FuncCallSiteMapping;
 
     // add hooks to function called inside the loop
-    CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
+    // CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
 
     // created auxiliary basic block
     vector<BasicBlock *> vecAdd;
@@ -938,53 +945,278 @@ void LoopInstrumentor::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap)
     }
 }
 
+struct NCAddrType {
+    Value *pAddr;
+    Type *pType;
+
+    NCAddrType() : pAddr(nullptr), pType(nullptr) {
+
+    }
+
+    bool operator < (const NCAddrType &o) const {
+        if (pAddr < o.pAddr) {
+            return true;
+        } else if (pAddr == o.pAddr) {
+            return pType < o.pType;
+        } else {
+            return false;
+        }
+    }
+};
+
+struct NCInstInfo {
+    Instruction *pInst;
+    LoadInst *pLoad;
+    StoreInst *pStore;
+
+    NCInstInfo() : pInst(nullptr), pLoad(nullptr), pStore(nullptr) {
+
+    }
+
+    NCInstInfo(Instruction *_pInst, LoadInst *_pLoad, StoreInst *_pStore)
+        : pInst(_pInst), pLoad(_pLoad), pStore(_pStore) {
+
+    }
+};
+
+static bool getNCAddrType(Instruction *pInst, unsigned oprandIdx, NCAddrType &addrType) {
+
+    Value *value = pInst->getOperand(oprandIdx);
+    Type *type0 = value->getType();
+    Type *type1 = type0->getContainedType(0);
+    Type *type2 = type1;
+
+    while (isa<PointerType>(type2)) {
+        type2 = type2->getContainedType(0);
+    }
+
+    if (!isa<FunctionType>(type2)) {
+        if (type1->isSized()) {
+            addrType.pAddr = value;
+            addrType.pType = type1;
+            return true;
+
+        } else {
+            errs() << "type1 isSized is false\n";
+            pInst->dump();
+            type1->dump();
+            return false;
+        }
+    }
+
+    errs() << "type2 is a FunctionType\n";
+    pInst->dump();
+    type1->dump();
+    return false;
+}
+
+enum NCDomResult : unsigned {
+    Uncertainty = 0,
+    ExistsLoadDomAllStores,
+    ExistsStoreDomAllLoads
+};
+
+static NCDomResult existsDom(const DominatorTree &DT, const std::vector<NCInstInfo> &vecInstInfo) {
+
+    std::vector<std::size_t> loadIdx;
+    std::vector<std::size_t> storeIdx;
+
+    for (std::size_t i = 0; i < vecInstInfo.size(); i++) {
+        if (vecInstInfo[i].pStore) {
+            storeIdx.push_back(i);
+        } else if (vecInstInfo[i].pLoad) {
+            loadIdx.push_back(i);
+        } else {
+            errs() << "NCInstInfo not Store and not Load\n";
+            assert(false);
+        }
+    }
+
+    for (auto si : storeIdx) {
+        bool storeDomAllLoads = true;
+        for (auto li : loadIdx) {
+            if (!DT.dominates(vecInstInfo[si].pInst, vecInstInfo[li].pInst)) {
+                storeDomAllLoads = false;
+                break;
+            }
+        }
+        if (storeDomAllLoads) {
+            return ExistsStoreDomAllLoads;
+        }
+    }
+
+    for (auto li : loadIdx) {
+        bool loadDomAllStores = true;
+        for (auto si : storeIdx) {
+            if (!DT.dominates(vecInstInfo[li].pInst, vecInstInfo[si].pInst)) {
+                loadDomAllStores = false;
+                break;
+            }
+        }
+        if (loadDomAllStores) {
+            return ExistsLoadDomAllStores;
+        }
+    }
+
+    return Uncertainty;
+}
+
 void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned, std::vector<Instruction *> &notInstrumented) {
+
+    assert(!vecCloned.empty());
+
+    Function *pFunction = vecCloned[0]->getParent();
+    LoopInfo &pLI = getAnalysis<LoopInfoWrapperPass>(*pFunction).getLoopInfo();
+    Loop *pLoop = SearchLoopInBBs(pFunction, &pLI, vecCloned);
+
+
+
+    BasicBlock *preHeader = pLoop->getLoopPreheader();
+
+    AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>(*pFunction).getAAResults();
+
+    auto DT = DominatorTree(*pFunction);
+
+    std::set<Instruction *> setNotMustAlias;
+    std::map<NCAddrType, std::vector<NCInstInfo>> mapInstInfo;
 
     for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
 
         BasicBlock *pBB = *BB;
+
         for (BasicBlock::iterator II = pBB->begin(); II != pBB->end(); II++) {
+
             Instruction *pInst = &*II;
 
             if (std::find(notInstrumented.begin(), notInstrumented.end(), pInst) != notInstrumented.end()) {
                 continue;
             }
 
-            switch (pInst->getOpcode()) {
-                case Instruction::Load: {
-                    Value *firstOperand = pInst->getOperand(0);
-                    Type *firstOperandType = firstOperand->getType();
-
-                    while (isa<PointerType>(firstOperandType)) {
-                        firstOperandType = firstOperandType->getContainedType(0);
-                    }
-                    if (!isa<FunctionType>(firstOperandType)) {
-                        if (LoadInst *pLoad = dyn_cast<LoadInst>(pInst)) {
-                            InlineHookLoad(pLoad, pInst);
+            if (isa<LoadInst>(pInst)) {
+                if (auto pLoad = dyn_cast<LoadInst>(pInst)) {
+                    unsigned oprandidx = 0;  // first operand
+                    NCAddrType addrType;
+                    if (getNCAddrType(pInst, oprandidx, addrType)) {
+                        // If pInst is alias with any of pre insts, then do not record
+                        bool isMustAlias = false;
+                        for (auto &pSetInst : setNotMustAlias) {
+                            if (AA.isMustAlias(pLoad, pSetInst)) {
+                                errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
+                                isMustAlias = true;
+                                break;
+                            }
+                        }
+                        if (!isMustAlias) {
+                            errs() << *pLoad << '\n';
+                            setNotMustAlias.insert(pInst);
+                            auto &vecInstInfo = mapInstInfo[addrType];
+                            vecInstInfo.emplace_back(pInst, pLoad, nullptr);
                         }
                     }
-                    break;
                 }
-                case Instruction::Store: {
-                    Value *secondOperand = pInst->getOperand(0);
-                    Type *secondOperandType = secondOperand->getType();
 
-                    while (isa<PointerType>(secondOperandType)) {
-                        secondOperandType = secondOperandType->getContainedType(0);
-                    }
-                    if (!isa<FunctionType>(secondOperandType)) {
-                        if (StoreInst *pStore = dyn_cast<StoreInst>(pInst)) {
-                            InlineHookStore(pStore, pInst);
+            } else if (isa<StoreInst>(pInst)) {
+                if (auto pStore = dyn_cast<StoreInst>(pInst)) {
+                    unsigned oprandidx = 1;  // second operand
+                    NCAddrType addrType;
+                    if (getNCAddrType(pInst, oprandidx, addrType)) {
+                        // If pInst is alias with any of pre insts, then do not record
+                        bool isMustAlias = false;
+                        for (auto pSetInst : setNotMustAlias) {
+                            if (AA.isMustAlias(pInst, pSetInst)) {
+                                errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
+                                isMustAlias = true;
+                                break;
+                            }
+                        }
+                        if (!isMustAlias) {
+                            errs() << *pStore << '\n';
+                            setNotMustAlias.insert(pInst);
+                            auto &vecInstInfo = mapInstInfo[addrType];
+                            vecInstInfo.emplace_back(pInst, nullptr, pStore);
                         }
                     }
-                    break;
                 }
-//                // TODO: memcpy, memmove
-//                case Instruction::MemoryOps: {
-//                    break;
-//                }
-                default:
-                    break;
+
+            } else if (isa<MemIntrinsic>(pInst)) {
+                errs() << "MemInstrinsic met\n";
+                pInst->dump();
+            }
+        }
+    }
+
+    for (auto &kv : mapInstInfo) {
+        for (auto &instInfo : kv.second) {
+            errs() << *kv.first.pAddr << "\n\t" << *instInfo.pInst << '\n';
+        }
+    }
+
+    for (auto &kv : mapInstInfo) {
+        assert(!kv.second.empty());
+
+        // not loop invar: inline record in-place
+        if (!pLoop->isLoopInvariant(kv.first.pAddr)) {
+
+            auto domResult = existsDom(DT, kv.second);
+            if (NCDomResult::ExistsLoadDomAllStores == domResult) {
+
+                // Find the first Load and insert
+                for (auto &instInfo : kv.second) {
+                    if (instInfo.pLoad) {
+                        errs() << "Not Loop Invar, ExistsLoadDomAllStores: InsertLoad in-place: " << instInfo.pInst << '\n';
+                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
+                        break;
+                    }
+                }
+
+            } else if (NCDomResult::Uncertainty == domResult) {
+
+                // Insert all
+                for (auto &instInfo : kv.second) {
+                    errs() << "Not Loop Invar, Uncertainty: InsertLoad/Store in-place: " << instInfo.pInst << '\n';
+                    if (instInfo.pLoad) {
+                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
+                    } else if (instInfo.pStore){
+                        InlineHookStore(kv.first.pAddr, kv.first.pType, instInfo.pInst);
+                    } else {
+                        errs() << "NCInstInfo not Store and not Load\n";
+                        assert(false);
+                    }
+                }
+            }
+
+            // loop invar
+        } else {
+
+            auto domResult = existsDom(DT, kv.second);
+
+            // inline record hoist to preHeader->terminator
+            if (NCDomResult::ExistsLoadDomAllStores == domResult) {
+
+                // Find the first Load and insert
+                for (auto &instInfo : kv.second) {
+                    if (instInfo.pLoad) {
+                        errs() << "Loop Invar, ExistsLoadDomAllStores: InsertLoad PreHeader: " << instInfo.pInst << '\n';
+                        InlineHookLoad(kv.first.pAddr, kv.first.pType, preHeader->getTerminator());
+                        break;
+                    }
+                }
+
+                // inline record in-place
+            } else if (NCDomResult::Uncertainty == domResult) {
+
+                // Insert all
+                for (auto &instInfo : kv.second) {
+                    errs() << "Loop Invar, Uncertainty: InsertLoad/Store in-place: " << instInfo.pInst << '\n';
+                    if (instInfo.pLoad) {
+                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
+                    } else if (instInfo.pStore) {
+                        InlineHookStore(kv.first.pAddr, kv.first.pType, instInfo.pInst);
+                    } else {
+                        errs() << "NCInstInfo not Store and not Load\n";
+                        assert(false);
+                    }
+                }
             }
         }
     }
@@ -1128,41 +1360,27 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
         assert(It != VCalleeMap.end());
 
         Instruction *pInst = cast<Instruction>(It->second);
-        switch (pInst->getOpcode()) {
-            case Instruction::Load: {
-                Value *firstOperand = pInst->getOperand(0);
-                Type *firstOperandType = firstOperand->getType();
-
-                while (isa<PointerType>(firstOperandType)) {
-                    firstOperandType = firstOperandType->getContainedType(0);
+        if (isa<LoadInst>(pInst)) {
+            if (auto pLoad = dyn_cast<LoadInst>(pInst)) {
+                unsigned oprandidx = 0;  // first operand
+                NCAddrType addrType;
+                if (getNCAddrType(pInst, oprandidx, addrType)) {
+                    InlineHookLoad(addrType.pAddr, addrType.pType, pInst);
                 }
-                if (!isa<FunctionType>(firstOperandType)) {
-                    if (LoadInst *pLoad = dyn_cast<LoadInst>(pInst)) {
-                        InlineHookLoad(pLoad, pInst);
-                    }
-                }
-                break;
             }
-            case Instruction::Store: {
-                Value *secondOperand = pInst->getOperand(0);
-                Type *secondOperandType = secondOperand->getType();
 
-                while (isa<PointerType>(secondOperandType)) {
-                    secondOperandType = secondOperandType->getContainedType(0);
+        } else if (isa<StoreInst>(pInst)) {
+            if (auto pStore = dyn_cast<StoreInst>(pInst)) {
+                unsigned oprandidx = 1;  // second operand
+                NCAddrType addrType;
+                if (getNCAddrType(pInst, oprandidx, addrType)) {
+                    InlineHookStore(addrType.pAddr, addrType.pType, pInst);
                 }
-                if (!isa<FunctionType>(secondOperandType)) {
-                    if (StoreInst *pStore = dyn_cast<StoreInst>(pInst)) {
-                        InlineHookStore(pStore, pInst);
-                    }
-                }
-                break;
             }
-//                // TODO: memcpy, memmove
-//                case Instruction::MemoryOps: {
-//                    break;
-//                }
-            default:
-                break;
+
+        } else if (isa<MemIntrinsic>(pInst)) {
+            errs() << "MemInstrinsic met\n";
+            pInst->dump();
         }
     }
 }
@@ -1172,44 +1390,25 @@ void LoopInstrumentor::InlineHookDelimit(Instruction *InsertBefore) {
     InlineSetRecord(this->ConstantLong0, this->ConstantInt0, this->ConstantInt1, InsertBefore);
 }
 
-void LoopInstrumentor::InlineHookLoad(LoadInst *pLoad, Instruction *InsertBefore) {
+void LoopInstrumentor::InlineHookLoad(Value *addr, Type *type1, Instruction *InsertBefore) {
 
-    Value *var = pLoad->getOperand(0);
-    DataLayout *dl = new DataLayout(this->pModule);
-    Type *type_1 = var->getType()->getContainedType(0);
+    auto dl = new DataLayout(this->pModule);
+    ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
+            std::to_string(dl->getTypeAllocSizeInBits(type1))), 10));
+    CastInst *int64_address = new PtrToIntInst(addr, this->LongType, "", InsertBefore);
 
-    if (type_1->isSized()) {
-        ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
-                std::to_string(dl->getTypeAllocSizeInBits(type_1))), 10));
-        CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
-
-        InlineSetRecord(int64_address, const_length, this->ConstantInt2, InsertBefore);
-
-    } else {
-        pLoad->dump();
-        type_1->dump();
-        assert(false);
-    }
+    InlineSetRecord(int64_address, const_length, this->ConstantInt2, InsertBefore);
 }
 
-void LoopInstrumentor::InlineHookStore(StoreInst *pStore, Instruction *InsertBefore) {
+void LoopInstrumentor::InlineHookStore(Value *addr, Type *type1, Instruction *InsertBefore) {
 
-    Value *var = pStore->getOperand(1);
-    DataLayout *dl = new DataLayout(this->pModule);
-    Type *type_1 = var->getType()->getContainedType(0);
+    auto dl = new DataLayout(this->pModule);
 
-    if (type_1->isSized()) {
-        ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
-                std::to_string(dl->getTypeAllocSizeInBits(type_1))), 10));
-        CastInst *int64_address = new PtrToIntInst(var, this->LongType, "", InsertBefore);
+    ConstantInt *const_length = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(
+            std::to_string(dl->getTypeAllocSizeInBits(type1))), 10));
+    CastInst *int64_address = new PtrToIntInst(addr, this->LongType, "", InsertBefore);
 
-        InlineSetRecord(int64_address, const_length, this->ConstantInt3, InsertBefore);
-
-    } else {
-        pStore->dump();
-        type_1->dump();
-        assert(false);
-    }
+    InlineSetRecord(int64_address, const_length, this->ConstantInt3, InsertBefore);
 }
 
 // Cost Record Format: (0, numGlobalCost, 0)
