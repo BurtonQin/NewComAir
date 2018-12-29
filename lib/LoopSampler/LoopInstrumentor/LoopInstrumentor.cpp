@@ -1,35 +1,17 @@
-//
-// Clonesample Pass demo.
-//
-
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/PostDominators.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constant.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DebugInfo.h"
-#include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Dominators.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/raw_ostream.h"
-
 #include "LoopSampler/LoopInstrumentor/LoopInstrumentor.h"
-#include "Common/ArrayLinkedIndentifier.h"
-#include "Common/Constant.h"
-#include "Common/Loop.h"
-#include "Common/Search.h"
 
-#include <stdlib.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
+
+#include "Common/ArrayLinkedIndentifier.h"  // TODO: name conflicts with Common/Search.h
+#include "Common/LocateInstrument.h"
 
 using namespace llvm;
+using std::map;
+using std::vector;
+using std::set;
 
 static RegisterPass<LoopInstrumentor> X("loop-instrument",
                                         "instrument a loop accessing an array element in each iteration",
@@ -52,6 +34,13 @@ static cl::opt<bool> bElseIf("bElseIf", cl::desc("use if-elseif-else instead of 
 
 char LoopInstrumentor::ID = 0;
 
+LoopInstrumentor::LoopInstrumentor() : ModulePass(ID) {
+    PassRegistry &Registry = *PassRegistry::getPassRegistry();
+    initializeDominatorTreeWrapperPassPass(Registry);
+    initializeLoopInfoWrapperPassPass(Registry);
+    initializeAAResultsWrapperPassPass(Registry);
+}
+
 void LoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
     AU.addRequired<DominatorTreeWrapperPass>();
@@ -59,11 +48,42 @@ void LoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.addRequired<AAResultsWrapperPass>();
 }
 
-LoopInstrumentor::LoopInstrumentor() : ModulePass(ID) {
-    PassRegistry &Registry = *PassRegistry::getPassRegistry();
-    initializeDominatorTreeWrapperPassPass(Registry);
-    initializeLoopInfoWrapperPassPass(Registry);
-    initializeAAResultsWrapperPassPass(Registry);
+bool LoopInstrumentor::runOnModule(Module &M) {
+
+    SetupInit(M);
+
+    Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
+    if (!pFunction) {
+        errs() << "Cannot find the input function\n";
+        return false;
+    }
+
+    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*pFunction).getDomTree();
+    LoopInfo &LoopInfo = getAnalysis<LoopInfoWrapperPass>(*pFunction).getLoopInfo();
+    AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>(*pFunction).getAAResults();
+    Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
+    map<Instruction *, bool> mapToInstrument;
+    SearchToBeInstrumented(pLoop, AA, DT, mapToInstrument);
+
+    for (auto &kv : mapToInstrument) {
+        errs() << (kv.second ? "Hoist" : "In-place") << " ->";
+        errs() << *kv.first << '\n';
+    }
+
+    InstrumentMain();
+    InstrumentInnerLoop(pLoop, mapToInstrument);
+
+    return false;
+}
+
+void LoopInstrumentor::SetupInit(Module &M) {
+    // all set up operation
+    this->pModule = &M;
+    SetupTypes();
+    SetupStructs();
+    SetupConstants();
+    SetupGlobals();
+    SetupFunctions();
 }
 
 void LoopInstrumentor::SetupTypes() {
@@ -72,11 +92,7 @@ void LoopInstrumentor::SetupTypes() {
     this->LongType = IntegerType::get(pModule->getContext(), 64);
     this->IntType = IntegerType::get(pModule->getContext(), 32);
     this->CharType = IntegerType::get(pModule->getContext(), 8);
-    this->BoolType = IntegerType::get(pModule->getContext(), 1);
-
-    this->VoidPointerType = PointerType::get(this->CharType, 0);
     this->CharStarType = PointerType::get(this->CharType, 0);
-    this->LongStarType = PointerType::get(this->LongType, 0);
 }
 
 void LoopInstrumentor::SetupStructs() {
@@ -87,7 +103,7 @@ void LoopInstrumentor::SetupStructs() {
     struct_fields.clear();
     struct_fields.push_back(this->LongType);  // address
     struct_fields.push_back(this->IntType);   // length
-    // 0: end; 1: delimiter; 2: load; 3: store; 4: memcpy; 5: memmove
+    // 0: end; 1: delimiter; 2: load; 3: store
     struct_fields.push_back(this->IntType);   // flag
     if (this->struct_stMemRecord->isOpaque()) {
         this->struct_stMemRecord->setBody(struct_fields, false);
@@ -96,28 +112,19 @@ void LoopInstrumentor::SetupStructs() {
 
 void LoopInstrumentor::SetupConstants() {
 
-    // long: 0, 1, 10, 16
+    // long: 0, 16
     this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
-    this->ConstantLong1 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("1"), 10));
-    this->ConstantLong10 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("10"), 10));
     this->ConstantLong16 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("16"), 10));
 
-    // int: -1, 0, 1, 2, 3, 4
+    // int: -1, 0, 1, 2, 3
     this->ConstantIntN1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("-1"), 10));
     this->ConstantInt0 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("0"), 10));
     this->ConstantInt1 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("1"), 10));
     this->ConstantInt2 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("2"), 10));
     this->ConstantInt3 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("3"), 10));
-    this->ConstantInt4 = ConstantInt::get(pModule->getContext(), APInt(32, StringRef("4"), 10));
-
-    // bool: false
-    this->ConstantIntFalse = ConstantInt::get(pModule->getContext(), APInt(1, StringRef("0"), 10));
 
     // char*: NULL
     this->ConstantNULL = ConstantPointerNull::get(this->CharStarType);
-
-    // struct_stMemRecord: {0,0,0}
-    this->ConstantStMemRecord = ConstantAggregateZero::get(this->struct_stMemRecord);
 }
 
 void LoopInstrumentor::SetupGlobals() {
@@ -159,9 +166,6 @@ void LoopInstrumentor::SetupGlobals() {
     ConstantAggregateZero *const_struct = ConstantAggregateZero::get(this->struct_stMemRecord);
     this->Record_CPI->setInitializer(const_struct);
 
-    // char *pRecord_CPI = (char *)&Record_CPI;
-    this->ConstantPtrRecord = ConstantExpr::getCast(Instruction::BitCast, this->Record_CPI, this->CharStarType);
-
     // const char *SAMPLE_RATE_ptr = "SAMPLE_RATE";
     ArrayType *ArrayTy12 = ArrayType::get(this->CharType, 12);
     GlobalVariable *pArrayStr = new GlobalVariable(*pModule, ArrayTy12, true, GlobalValue::PrivateLinkage, 0, "");
@@ -176,7 +180,7 @@ void LoopInstrumentor::SetupGlobals() {
     // long numGlobalCost = 0;
     assert(pModule->getGlobalVariable("numGlobalCost") == NULL);
     this->numGlobalCost = new GlobalVariable(*pModule, this->IntType, false, GlobalValue::ExternalLinkage, 0,
-                                                "numGlobalCost");
+                                             "numGlobalCost");
     this->numGlobalCost->setAlignment(4);
     this->numGlobalCost->setInitializer(this->ConstantInt0);
 }
@@ -203,54 +207,6 @@ void LoopInstrumentor::SetupFunctions() {
         FunctionType *atoi_FuncTy = FunctionType::get(this->IntType, ArgTypes, false);
         this->function_atoi = Function::Create(atoi_FuncTy, GlobalValue::ExternalLinkage, "atoi", pModule);
         this->function_atoi->setCallingConv(CallingConv::C);
-        ArgTypes.clear();
-    }
-
-    // func_llvm_memcpy
-    this->func_llvm_memcpy = pModule->getFunction("llvm.memcpy.p0i8.p0i8.i64");
-    if (!this->func_llvm_memcpy) {
-        ArgTypes.clear();
-        ArgTypes.push_back(this->CharStarType);
-        ArgTypes.push_back(this->CharStarType);
-        ArgTypes.push_back(this->LongType);
-        ArgTypes.push_back(this->IntType);
-        ArgTypes.push_back(this->BoolType);
-        FunctionType *memcpy_funcTy = FunctionType::get(this->VoidType, ArgTypes, false);
-        this->func_llvm_memcpy = Function::Create(memcpy_funcTy, GlobalValue::ExternalLinkage,
-                                                  "llvm.memcpy.p0i8.p0i8.i64", pModule);
-        this->func_llvm_memcpy->setCallingConv(CallingConv::C);
-
-        AttributeList func_llvm_memcpy_PAL;
-        {
-            SmallVector<AttributeList, 4> Attrs;
-
-            AttributeList PAS;
-            {
-                AttrBuilder B;
-                B.addAttribute(Attribute::NoCapture);
-                PAS = AttributeList::get(pModule->getContext(), 1U, B);
-            }
-            Attrs.push_back(PAS);
-
-            {
-                AttrBuilder B;
-                B.addAttribute(Attribute::ReadOnly);
-                PAS = AttributeList::get(pModule->getContext(), 2U, B);
-            }
-            Attrs.push_back(PAS);
-
-            {
-                AttrBuilder B;
-                B.addAttribute(Attribute::NoUnwind);
-                PAS = AttributeList::get(pModule->getContext(), ~0U, B);
-            }
-            Attrs.push_back(PAS);
-
-            func_llvm_memcpy_PAL = AttributeList::get(pModule->getContext(), Attrs);
-
-        }
-        this->func_llvm_memcpy->setAttributes(func_llvm_memcpy_PAL);
-
         ArgTypes.clear();
     }
 
@@ -404,36 +360,112 @@ void LoopInstrumentor::InstrumentMain() {
     }
 }
 
-void LoopInstrumentor::SetupInit(Module &M) {
-    // all set up operation
-    this->pModule = &M;
-    SetupTypes();
-    SetupStructs();
-    SetupConstants();
-    SetupGlobals();
-    SetupFunctions();
-}
+bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, DominatorTree &DT,
+                                              std::map<Instruction *, bool> &mapToInstrument) {
 
-bool LoopInstrumentor::runOnModule(Module &M) {
-
-    SetupInit(M);
-
-    Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
-    if (!pFunction) {
-        errs() << "Cannot find the input function\n";
+    if (!pLoop) {
+        errs() << "pLoop is NULL\n";
         return false;
     }
 
-    LoopInfo &LoopInfo = getAnalysis<LoopInfoWrapperPass>(*pFunction).getLoopInfo();
-    Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
+    std::set<Instruction *> setNotMustAlias;
+    std::map<NCAddrType, std::vector<Instruction *>> mapLoadInst;
+    std::map<NCAddrType, std::vector<Instruction *>> mapStoreInst;
 
-    InstrumentMain();
-    InstrumentInnerLoop(pLoop);
+    for (auto BI = pLoop->block_begin(); BI != pLoop->block_end(); BI++) {
+        BasicBlock *BB = *BI;
+        for (auto &II : *BB) {
+            Instruction *pInst = &II;
 
-    return false;
+            if (isa<LoadInst>(pInst)) {
+                NCAddrType addrType;
+                if (getNCAddrType(pInst, 0, addrType)) {  // first operand
+                    // If pInst is MustAlias with any of pre insts, then do not record
+                    bool isMustAlias = false;
+                    for (auto &pSetInst : setNotMustAlias) {
+                        if (AA.isMustAlias(pInst, pSetInst)) {
+                            errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
+                            isMustAlias = true;
+                            break;
+                        }
+                    }
+                    if (!isMustAlias) {
+                        setNotMustAlias.insert(pInst);
+                        auto &vecLoadInst = mapLoadInst[addrType];
+                        vecLoadInst.push_back(pInst);
+                    }
+
+                }
+            } else if (isa<StoreInst>(pInst)) {
+                NCAddrType addrType;
+                if (getNCAddrType(pInst, 1, addrType)) {  // second operand
+                    // If pInst is MustAlias with any of pre insts, then do not record
+                    bool isMustAlias = false;
+                    for (auto &pSetInst : setNotMustAlias) {
+                        if (AA.isMustAlias(pInst, pSetInst)) {
+                            errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
+                            isMustAlias = true;
+                            break;
+                        }
+                    }
+                    if (!isMustAlias) {
+                        setNotMustAlias.insert(pInst);
+                        auto &vecStoreInst = mapStoreInst[addrType];
+                        vecStoreInst.push_back(pInst);
+                    }
+
+                }
+            } else if (isa<MemIntrinsic>(pInst)) {
+                errs() << "MemIntrinsic met\n";
+                pInst->dump();
+            }
+        }
+    }
+
+    for (auto &kv : mapLoadInst) {
+        assert(!kv.second.empty());
+
+        // init to empty
+        vector<Instruction *> vecStoreInst;
+
+        if (mapStoreInst.find(kv.first) != mapStoreInst.end()) {
+            vecStoreInst = mapStoreInst[kv.first];
+        }
+
+        switch (existsDom(DT, kv.second, vecStoreInst)) {
+            case NCDomResult::ExistsLoadDomAllStores: {
+                // if loop invar: record one Load, hoist
+                mapToInstrument[kv.second[0]] = pLoop->isLoopInvariant(kv.first.pAddr);
+                break;
+            }
+
+            case NCDomResult::Uncertainty: {
+                // record all, in-place
+                for (auto pLoad : kv.second) {
+                    mapToInstrument[pLoad] = false;
+                }
+                for (auto pStore : vecStoreInst) {
+                    mapToInstrument[pStore] = false;
+                }
+                break;
+            }
+
+            case NCDomResult::ExistsStoreDomAllLoads: {
+                // do not record
+                break;
+            }
+
+            default: {
+                assert(false);
+                break;
+            }
+        }
+    }
+
+    return true;
 }
 
-void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop) {
+void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, std::map<Instruction *, bool> &mapToInstrument) {
 
     set<BasicBlock *> setBlocksInLoop;
     for (Loop::block_iterator BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
@@ -442,9 +474,8 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop) {
 
     ValueToValueMapTy VCalleeMap;
     map<Function *, set<Instruction *> > FuncCallSiteMapping;
-
     // add hooks to function called inside the loop
-    // CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
+    CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
 
     // created auxiliary basic block
     vector<BasicBlock *> vecAdd;
@@ -454,33 +485,31 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop) {
         CreateIfElseIfBlock(pInnerLoop, vecAdd);
     }
 
-    vector<Instruction *> notInstrumentedOriginal;
     // inline numLocalCost to function
-    InlineNumLocalCost(pInnerLoop, notInstrumentedOriginal);
+    InlineNumLocalCost(pInnerLoop);
 
     // clone loop
     ValueToValueMapTy VMap;
     vector<BasicBlock *> vecCloned;
-
     CloneInnerLoop(pInnerLoop, vecAdd, VMap, vecCloned);
 
-    vector<Instruction *> notInstrumentedCloned;
-    for (Instruction *pInst : notInstrumentedOriginal) {
-        if (VMap.find(pInst) != VMap.end()){
-            Instruction *pInstCloned = cast<Instruction>(VMap[pInst]);
-            if (pInstCloned) {
-                notInstrumentedCloned.push_back(pInstCloned);
-            }
+    map<Instruction *, bool> mapToInstrumentCloned;
+    for (auto &kv : mapToInstrument) {
+        auto pClonedInst = cast<Instruction>(VMap[kv.first]);
+        if (pClonedInst) {
+            mapToInstrumentCloned[pClonedInst] = kv.second;
+        } else {
+            errs() << "Not cloned: " << kv.first << '\n';
         }
     }
 
-    // instrument RecordMemHooks to clone loop
-    InstrumentRecordMemHooks(vecCloned, notInstrumentedCloned);
-
-    // inline delimit
     BasicBlock *pClonedBody = vecAdd[2];
     Instruction *pFirstInst = pClonedBody->getFirstNonPHI();
 
+    // instrument RecordMemHooks to clone loop
+    InstrumentRecordMemHooks(mapToInstrumentCloned, pFirstInst);
+
+    // inline delimit
     InlineHookDelimit(pFirstInst);
 }
 
@@ -609,7 +638,6 @@ void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBl
 
     LoadInst *pLoad1 = NULL;
     LoadInst *pLoad2 = NULL;
-    //   LoadInst *pLoad3 = NULL;
     ICmpInst *pCmp = NULL;
 
     BinaryOperator *pBinary = NULL;
@@ -713,18 +741,6 @@ void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBl
         BranchInst::Create(pHeader, pElseBody);
     }
 
-    /*
-     * Insert at the beginning of clonedBody:
-     * cost++;
-     */
-//    {
-//        pLoad3 = new LoadInst(this->numGlobalCost, "", false, pClonedBody);
-//        pLoad3->setAlignment(8);
-//        pBinary = BinaryOperator::Create(Instruction::Add, pLoad3, this->ConstantLong1, "inc1", pClonedBody);
-//        pStore = new StoreInst(pBinary, this->numGlobalCost, false, pClonedBody);
-//        pStore->setAlignment(8);
-//    }
-
     // condition1: num 0
     vecAdded.push_back(pCondition1);
     vecAdded.push_back(pIfBody);
@@ -735,7 +751,7 @@ void LoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBl
     vecAdded.push_back(pElseBody);
 }
 
-void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& notInstrumentedOriginal) {
+void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop) {
 
     // int numLocalCost = 0;  // function.entry
     // numLocalCost++;  // loop.header
@@ -751,22 +767,15 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& no
     StoreInst *pStore = new StoreInst(this->ConstantInt0, pAlloc, false, pFirst);
     pStore->setAlignment(4);
 
-    notInstrumentedOriginal.push_back(pAlloc);
-    notInstrumentedOriginal.push_back(pStore);
-
     // numLocalCost++;  // loop.header
     BasicBlock *pHeader = pLoop->getHeader();
     Instruction *pHeaderFirst = pHeader->getFirstNonPHI();
 
     LoadInst *pLoad = new LoadInst(pAlloc, "", false, pHeaderFirst);
     BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pLoad, this->ConstantInt1, "numLocalCost++",
-                                     pHeaderFirst);
+                                                     pHeaderFirst);
     StoreInst *pStoreAdd = new StoreInst(pBinary, pAlloc, false, pHeaderFirst);
     pStoreAdd->setAlignment(4);
-
-    // do not instrument numLocalCost++
-    notInstrumentedOriginal.push_back(pLoad);
-    notInstrumentedOriginal.push_back(pStoreAdd);
 
     // numGlobalCost += numLocalCost;  // function.return
     for (auto BB = pFunction->begin(); BB != pFunction->end(); BB++) {
@@ -776,15 +785,11 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& no
                 LoadInst *pNumLocalCost = new LoadInst(pAlloc, "", false, pInst);
                 LoadInst *pNumGlobalCost = new LoadInst(this->numGlobalCost, "", false, pInst);
 
-                BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pNumLocalCost, pNumGlobalCost, "numGlobalCost+=numLocalCost", pInst);
+                BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pNumLocalCost, pNumGlobalCost,
+                                                                 "numGlobalCost+=numLocalCost", pInst);
 
                 StoreInst *pStore = new StoreInst(pBinary, this->numGlobalCost, false, pInst);
                 pStore->setAlignment(4);
-
-                notInstrumentedOriginal.push_back(pNumLocalCost);
-                notInstrumentedOriginal.push_back(pNumGlobalCost);
-                notInstrumentedOriginal.push_back(pBinary);
-                notInstrumentedOriginal.push_back(pStore);
             }
         }
     }
@@ -792,16 +797,11 @@ void LoopInstrumentor::InlineNumLocalCost(Loop *pLoop, vector<Instruction *>& no
 
 void LoopInstrumentor::CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
                                       std::vector<BasicBlock *> &vecCloned) {
+
     Function *pFunction = pLoop->getHeader()->getParent();
 
     SmallVector<BasicBlock *, 4> ExitBlocks;
     pLoop->getExitBlocks(ExitBlocks);
-
-//    set<BasicBlock *> setExitBlocks;
-//
-//    for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
-//        setExitBlocks.insert(ExitBlocks[i]);
-//    }
 
     for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
         VMap[ExitBlocks[i]] = ExitBlocks[i];
@@ -945,278 +945,36 @@ void LoopInstrumentor::RemapInstruction(Instruction *I, ValueToValueMapTy &VMap)
     }
 }
 
-struct NCAddrType {
-    Value *pAddr;
-    Type *pType;
+void LoopInstrumentor::InstrumentRecordMemHooks(std::map<Instruction *, bool> &mapToInstrument,
+                                                Instruction *pFirstOfPreheader) {
 
-    NCAddrType() : pAddr(nullptr), pType(nullptr) {
-
-    }
-
-    bool operator < (const NCAddrType &o) const {
-        if (pAddr < o.pAddr) {
-            return true;
-        } else if (pAddr == o.pAddr) {
-            return pType < o.pType;
-        } else {
-            return false;
-        }
-    }
-};
-
-struct NCInstInfo {
-    Instruction *pInst;
-    LoadInst *pLoad;
-    StoreInst *pStore;
-
-    NCInstInfo() : pInst(nullptr), pLoad(nullptr), pStore(nullptr) {
-
-    }
-
-    NCInstInfo(Instruction *_pInst, LoadInst *_pLoad, StoreInst *_pStore)
-        : pInst(_pInst), pLoad(_pLoad), pStore(_pStore) {
-
-    }
-};
-
-static bool getNCAddrType(Instruction *pInst, unsigned oprandIdx, NCAddrType &addrType) {
-
-    Value *value = pInst->getOperand(oprandIdx);
-    Type *type0 = value->getType();
-    Type *type1 = type0->getContainedType(0);
-    Type *type2 = type1;
-
-    while (isa<PointerType>(type2)) {
-        type2 = type2->getContainedType(0);
-    }
-
-    if (!isa<FunctionType>(type2)) {
-        if (type1->isSized()) {
-            addrType.pAddr = value;
-            addrType.pType = type1;
-            return true;
-
-        } else {
-            errs() << "type1 isSized is false\n";
-            pInst->dump();
-            type1->dump();
-            return false;
-        }
-    }
-
-    errs() << "type2 is a FunctionType\n";
-    pInst->dump();
-    type1->dump();
-    return false;
-}
-
-enum NCDomResult : unsigned {
-    Uncertainty = 0,
-    ExistsLoadDomAllStores,
-    ExistsStoreDomAllLoads
-};
-
-static NCDomResult existsDom(const DominatorTree &DT, const std::vector<NCInstInfo> &vecInstInfo) {
-
-    std::vector<std::size_t> loadIdx;
-    std::vector<std::size_t> storeIdx;
-
-    for (std::size_t i = 0; i < vecInstInfo.size(); i++) {
-        if (vecInstInfo[i].pStore) {
-            storeIdx.push_back(i);
-        } else if (vecInstInfo[i].pLoad) {
-            loadIdx.push_back(i);
-        } else {
-            errs() << "NCInstInfo not Store and not Load\n";
-            assert(false);
-        }
-    }
-
-    for (auto si : storeIdx) {
-        bool storeDomAllLoads = true;
-        for (auto li : loadIdx) {
-            if (!DT.dominates(vecInstInfo[si].pInst, vecInstInfo[li].pInst)) {
-                storeDomAllLoads = false;
+    for (auto &kv : mapToInstrument) {
+        switch (kv.first->getOpcode()) {
+            case Instruction::Load: {
+                NCAddrType addrType;
+                if (getNCAddrType(kv.first, 0, addrType)) {
+                    if (kv.second) {
+                        InlineHookLoad(addrType.pAddr, addrType.pType, pFirstOfPreheader);
+                    } else {
+                        InlineHookLoad(addrType.pAddr, addrType.pType, kv.first);
+                    }
+                } else {
+                    errs() << "Load fails to get AddrType: " << kv.first << '\n';
+                }
                 break;
             }
-        }
-        if (storeDomAllLoads) {
-            return ExistsStoreDomAllLoads;
-        }
-    }
-
-    for (auto li : loadIdx) {
-        bool loadDomAllStores = true;
-        for (auto si : storeIdx) {
-            if (!DT.dominates(vecInstInfo[li].pInst, vecInstInfo[si].pInst)) {
-                loadDomAllStores = false;
+            case Instruction::Store: {
+                NCAddrType addrType;
+                if (getNCAddrType(kv.first, 1, addrType)) {
+                    InlineHookStore(addrType.pAddr, addrType.pType, kv.first);
+                } else {
+                    errs() << "Store fails to get AddrType: " << kv.first << '\n';
+                }
                 break;
             }
-        }
-        if (loadDomAllStores) {
-            return ExistsLoadDomAllStores;
-        }
-    }
-
-    return Uncertainty;
-}
-
-void LoopInstrumentor::InstrumentRecordMemHooks(std::vector<BasicBlock *> &vecCloned, std::vector<Instruction *> &notInstrumented) {
-
-    assert(!vecCloned.empty());
-
-    Function *pFunction = vecCloned[0]->getParent();
-    LoopInfo &pLI = getAnalysis<LoopInfoWrapperPass>(*pFunction).getLoopInfo();
-    Loop *pLoop = SearchLoopInBBs(pFunction, &pLI, vecCloned);
-
-
-
-    BasicBlock *preHeader = pLoop->getLoopPreheader();
-
-    AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>(*pFunction).getAAResults();
-
-    auto DT = DominatorTree(*pFunction);
-
-    std::set<Instruction *> setNotMustAlias;
-    std::map<NCAddrType, std::vector<NCInstInfo>> mapInstInfo;
-
-    for (std::vector<BasicBlock *>::iterator BB = vecCloned.begin(); BB != vecCloned.end(); BB++) {
-
-        BasicBlock *pBB = *BB;
-
-        for (BasicBlock::iterator II = pBB->begin(); II != pBB->end(); II++) {
-
-            Instruction *pInst = &*II;
-
-            if (std::find(notInstrumented.begin(), notInstrumented.end(), pInst) != notInstrumented.end()) {
-                continue;
-            }
-
-            if (isa<LoadInst>(pInst)) {
-                if (auto pLoad = dyn_cast<LoadInst>(pInst)) {
-                    unsigned oprandidx = 0;  // first operand
-                    NCAddrType addrType;
-                    if (getNCAddrType(pInst, oprandidx, addrType)) {
-                        // If pInst is alias with any of pre insts, then do not record
-                        bool isMustAlias = false;
-                        for (auto &pSetInst : setNotMustAlias) {
-                            if (AA.isMustAlias(pLoad, pSetInst)) {
-                                errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
-                                isMustAlias = true;
-                                break;
-                            }
-                        }
-                        if (!isMustAlias) {
-                            errs() << *pLoad << '\n';
-                            setNotMustAlias.insert(pInst);
-                            auto &vecInstInfo = mapInstInfo[addrType];
-                            vecInstInfo.emplace_back(pInst, pLoad, nullptr);
-                        }
-                    }
-                }
-
-            } else if (isa<StoreInst>(pInst)) {
-                if (auto pStore = dyn_cast<StoreInst>(pInst)) {
-                    unsigned oprandidx = 1;  // second operand
-                    NCAddrType addrType;
-                    if (getNCAddrType(pInst, oprandidx, addrType)) {
-                        // If pInst is alias with any of pre insts, then do not record
-                        bool isMustAlias = false;
-                        for (auto pSetInst : setNotMustAlias) {
-                            if (AA.isMustAlias(pInst, pSetInst)) {
-                                errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
-                                isMustAlias = true;
-                                break;
-                            }
-                        }
-                        if (!isMustAlias) {
-                            errs() << *pStore << '\n';
-                            setNotMustAlias.insert(pInst);
-                            auto &vecInstInfo = mapInstInfo[addrType];
-                            vecInstInfo.emplace_back(pInst, nullptr, pStore);
-                        }
-                    }
-                }
-
-            } else if (isa<MemIntrinsic>(pInst)) {
-                errs() << "MemInstrinsic met\n";
-                pInst->dump();
-            }
-        }
-    }
-
-    for (auto &kv : mapInstInfo) {
-        for (auto &instInfo : kv.second) {
-            errs() << *kv.first.pAddr << "\n\t" << *instInfo.pInst << '\n';
-        }
-    }
-
-    for (auto &kv : mapInstInfo) {
-        assert(!kv.second.empty());
-
-        // not loop invar: inline record in-place
-        if (!pLoop->isLoopInvariant(kv.first.pAddr)) {
-
-            auto domResult = existsDom(DT, kv.second);
-            if (NCDomResult::ExistsLoadDomAllStores == domResult) {
-
-                // Find the first Load and insert
-                for (auto &instInfo : kv.second) {
-                    if (instInfo.pLoad) {
-                        errs() << "Not Loop Invar, ExistsLoadDomAllStores: InsertLoad in-place: " << instInfo.pInst << '\n';
-                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
-                        break;
-                    }
-                }
-
-            } else if (NCDomResult::Uncertainty == domResult) {
-
-                // Insert all
-                for (auto &instInfo : kv.second) {
-                    errs() << "Not Loop Invar, Uncertainty: InsertLoad/Store in-place: " << instInfo.pInst << '\n';
-                    if (instInfo.pLoad) {
-                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
-                    } else if (instInfo.pStore){
-                        InlineHookStore(kv.first.pAddr, kv.first.pType, instInfo.pInst);
-                    } else {
-                        errs() << "NCInstInfo not Store and not Load\n";
-                        assert(false);
-                    }
-                }
-            }
-
-            // loop invar
-        } else {
-
-            auto domResult = existsDom(DT, kv.second);
-
-            // inline record hoist to preHeader->terminator
-            if (NCDomResult::ExistsLoadDomAllStores == domResult) {
-
-                // Find the first Load and insert
-                for (auto &instInfo : kv.second) {
-                    if (instInfo.pLoad) {
-                        errs() << "Loop Invar, ExistsLoadDomAllStores: InsertLoad PreHeader: " << instInfo.pInst << '\n';
-                        InlineHookLoad(kv.first.pAddr, kv.first.pType, preHeader->getTerminator());
-                        break;
-                    }
-                }
-
-                // inline record in-place
-            } else if (NCDomResult::Uncertainty == domResult) {
-
-                // Insert all
-                for (auto &instInfo : kv.second) {
-                    errs() << "Loop Invar, Uncertainty: InsertLoad/Store in-place: " << instInfo.pInst << '\n';
-                    if (instInfo.pLoad) {
-                        InlineHookLoad(kv.first.pAddr, kv.first.pType, instInfo.pInst);
-                    } else if (instInfo.pStore) {
-                        InlineHookStore(kv.first.pAddr, kv.first.pType, instInfo.pInst);
-                    } else {
-                        errs() << "NCInstInfo not Store and not Load\n";
-                        assert(false);
-                    }
-                }
+            default: {
+                errs() << "Instrument not Load or Store: " << kv.first << '\n';
+                break;
             }
         }
     }
@@ -1352,10 +1110,9 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
     }
 
     set<Instruction *>::iterator itMonInstBegin = setMonitoredInstInCallee.begin();
-    set<Instruction *>::iterator itMonInstEnd   = setMonitoredInstInCallee.end();
+    set<Instruction *>::iterator itMonInstEnd = setMonitoredInstInCallee.end();
 
-    for(; itMonInstBegin != itMonInstEnd ; itMonInstBegin++ )
-    {
+    for (; itMonInstBegin != itMonInstEnd; itMonInstBegin++) {
         ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
         assert(It != VCalleeMap.end());
 

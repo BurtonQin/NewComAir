@@ -1,5 +1,4 @@
-#ifndef COMAIR_SEARCH_H
-#define COMAIR_SEARCH_H
+#include "Common/Search.h"
 
 #include <set>
 #include <stdio.h>
@@ -12,8 +11,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
-
-#include "Common/Search.h"
 
 using namespace llvm;
 using namespace std;
@@ -169,41 +166,3 @@ Loop *SearchLoopByLineNo(Function *pFunction, LoopInfo *pLI, unsigned uLineNo) {
     return pLI->getLoopFor(pBlock);
 
 }
-
-Loop *SearchLoopInBBs(Function *pFunction, LoopInfo *pLI, vector<BasicBlock *> &vecBasicBlocks) {
-
-    unsigned int uDepth = 0;
-    BasicBlock *pBlock = NULL;
-
-    for (vector<BasicBlock *>::iterator itBegin = vecBasicBlocks.begin(), itEnd = vecBasicBlocks.end();
-         itBegin != itEnd; itBegin++) {
-        if (pLI->getLoopDepth(*itBegin) > uDepth) {
-            uDepth = pLI->getLoopDepth(*itBegin);
-            pBlock = *itBegin;
-        }
-    }
-
-    if (pBlock == NULL) {
-        //return NULL;
-        set<Loop *> setLoop;
-        for (Function::iterator BI = pFunction->begin(); BI != pFunction->end(); BI++) {
-            BasicBlock *BB = &*BI;
-            if (pLI->getLoopDepth(BB) > 0) {
-                setLoop.insert(pLI->getLoopFor(BB));
-            }
-        }
-
-        if (setLoop.size() == 1) {
-            return *(setLoop.begin());
-        }
-
-        return NULL;
-    }
-
-
-    return pLI->getLoopFor(pBlock);
-
-}
-
-
-#endif //COMAIR_SEARCH_H

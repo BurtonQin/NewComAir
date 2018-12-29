@@ -2,7 +2,7 @@ add_library(LoopInstrumentPass MODULE
         # List your source files here.
         LoopInstrumentor.cpp)
 
-target_link_libraries(LoopInstrumentPass CommonLib)# SupportLib)
+target_link_libraries(LoopInstrumentPass CommonLib)
 
 # Use C++11 to compile our pass (i.e., supply -std=c++11).
 target_compile_features(LoopInstrumentPass PRIVATE cxx_range_for cxx_auto_type)
