@@ -18,6 +18,11 @@ Steps:
     ```./run_exe_time.py -bElseif```
 3. O2: append -O2 e.g.
     ```./run_exe_time.py -O2```
+4. To only record array start and end, exec the following commands before exec other Makefiles.
+    ```
+    cd build; make -f ../Makefile.clonesample.indvar
+    ```
+   This will generate a indvar.info recording the indvar and stride in build/
 
 The results are in results.O0/ and results.O2/.
  

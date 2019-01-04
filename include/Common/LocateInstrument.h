@@ -2,6 +2,7 @@
 #define NEWCOMAIR_COMMON_LOCATEINSTRUMENT_H
 
 #include <vector>
+#include <map>
 
 namespace llvm {
     class Value;
@@ -32,7 +33,7 @@ struct NCAddrType {
     }
 };
 
-bool getNCAddrType(llvm::Instruction *pInst, unsigned operandIdx, NCAddrType &addrType);
+bool getNCAddrType(const llvm::Instruction *pInst, unsigned operandIdx, NCAddrType &addrType);
 
 enum NCDomResult : unsigned {
     Uncertainty = 0,
@@ -42,5 +43,13 @@ enum NCDomResult : unsigned {
 
 NCDomResult existsDom(const llvm::DominatorTree &DT, const std::vector<llvm::Instruction *> &vecLoadInst,
                       const std::vector<llvm::Instruction *> &vecStoreInst);
+
+enum NCInstrumentLocFlag : unsigned {
+    Inplace = 0,
+    Hoist,
+    HoistSink,
+};
+
+typedef std::map<llvm::Instruction *, NCInstrumentLocFlag> MapLocFlagToInstrument;
 
 #endif //NEWCOMAIR_COMMON_LOCATEINSTRUMENT_H

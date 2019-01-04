@@ -4,9 +4,8 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Dominators.h>
-#include <llvm/Support/raw_ostream.h>  // errs()
 
-bool getNCAddrType(llvm::Instruction *pInst, unsigned oprandIdx, NCAddrType &addrType) {
+bool getNCAddrType(const llvm::Instruction *pInst, unsigned oprandIdx, NCAddrType &addrType) {
 
     llvm::Value *value = pInst->getOperand(oprandIdx);
     llvm::Type *type0 = value->getType();

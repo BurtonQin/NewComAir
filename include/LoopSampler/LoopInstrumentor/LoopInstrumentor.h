@@ -10,6 +10,7 @@
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
+#include "Common/LocateInstrument.h"
 
 using namespace llvm;
 
@@ -41,11 +42,13 @@ private:
     // Instrument
     void InstrumentMain();
 
-    void InstrumentInnerLoop(Loop *pInnerLoop, std::map<Instruction *, bool> &mapToInstrument);
+    void InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrument &mapToInstrument);
 
     // Helper
+    bool ReadIndvarStride(std::string fileName);
+
     bool SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, DominatorTree &DT,
-                                std::map<Instruction *, bool> &mapToInstrument);
+                                MapLocFlagToInstrument &mapToInstrument);
 
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,
                              std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
@@ -57,11 +60,14 @@ private:
     void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
                         std::vector<BasicBlock *> &vecCloned);
 
+    void InsertBBBeforeExit(Loop *pLoop, ValueToValueMapTy &VMap, std::map<BasicBlock *, BasicBlock *> &mapExit2Inter);
+
     // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
     // Instrument InlineHookLoad and InlineHookStore
-    void InstrumentRecordMemHooks(std::map<Instruction *, bool> &mapToInstrument, Instruction *pFirstOfPreheader);
+    void InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToInstrument, Instruction *pTermOfPreheader,
+                                  std::set<BasicBlock *> setInterBlock);
 
     // Inline instrument
     void InlineNumLocalCost(Loop *pLoop);
@@ -76,10 +82,18 @@ private:
 
     void InlineOutputCost(Instruction *InsertBefore);
 
+    void InlineHookLoopBegin(Value *addr, Type *type1, Instruction *InsertBefore);
+
+    void InlineHookLoopEnd(Value *addr, Type *type1, Instruction *InsertBefore);
+
+    void ClonePreIndvar(Instruction *preIndvar, Instruction *InsertBefore, ValueToValueMapTy &VMap,
+                        std::vector<Instruction *> &vecClonedInst);
+
     // Module
     Module *pModule;
     std::set<int> setInstID;
     // std::vector<std::pair<Function *, int> > vecParaID;
+    std::string strIndVar;
 
     // Type
     Type *VoidType;
@@ -116,6 +130,9 @@ private:
     ConstantInt *ConstantInt1;  // delimit
     ConstantInt *ConstantInt2;  // load
     ConstantInt *ConstantInt3;  // store
+    ConstantInt *ConstantInt4;  // loop begin
+    ConstantInt *ConstantInt5;  // loop end
+    ConstantInt *ConstantInt6;  // loop stride
     ConstantInt *ConstantLong16;
     ConstantPointerNull *ConstantNULL;
     Constant *SAMPLE_RATE_ptr;

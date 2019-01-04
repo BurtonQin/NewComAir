@@ -1,7 +1,9 @@
 add_executable(dumpmem
         # List your source files here.
-        src/MemDumper.cpp
-        )
+        include/SharedMemReader.h
+        include/ParseRecord.h
+        src/SharedMemReader.cpp
+        src/ParseRecord.cpp)
 
 target_include_directories(dumpmem PRIVATE include)
 target_link_libraries(dumpmem rt)
