@@ -304,7 +304,7 @@ bool isArrayAccessLoop1(Loop *pLoop, set<Value *> &setArrayValue) {
     if (setPArrValue.size() == 0) {
         return false;
     }
-    errs() << setPArrValue.size() << "\n";
+    // errs() << setPArrValue.size() << "\n";
 
     set<Value *>::iterator itSetBegin = setPArrValue.begin();
     set<Value *>::iterator itSetEnd = setPArrValue.end();

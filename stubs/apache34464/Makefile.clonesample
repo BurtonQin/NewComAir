@@ -1,7 +1,7 @@
 OP_LEVEL=0
 #OP_LEVEL=2
-BELSEIF=
-#BELSEIF=-bElseIf
+#BELSEIF=
+BELSEIF=-bElseIf
 
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto

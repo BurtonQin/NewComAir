@@ -73,14 +73,46 @@ bool LoopInstrumentor::runOnModule(Module &M) {
 
     Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
 
+    set<Value *> setArrayListValue;
+    if (isArrayAccessLoop(pLoop, setArrayListValue)) {
+        errs() << "The Loop is ArrayAccessLoop\n";
+    } else if (isArrayAccessLoop1(pLoop, setArrayListValue)) {
+        errs() << "The Loop is ArrayAccessLoop1\n";
+    } else if (isLinkedListAccessLoop(pLoop, setArrayListValue)) {
+        errs() << "The Loop is LinkedListAccessLoop\n";
+    }
+
+    // TODO: First find vars, then decide how to instrument
+    set<Instruction *> setArrayListInst;
+    for (auto &pVal : setArrayListValue) {
+        if (auto pInst = dyn_cast<Instruction>(pVal)) {
+            errs() << "Instruction to be instrumented: " << *pInst << '\n';
+            setArrayListInst.insert(pInst);
+        } else {
+            errs() << "Not an instruction" << pVal->getName() << '\n';
+        }
+    }
+
     MapLocFlagToInstrument mapToInstrument;
     SearchToBeInstrumented(pLoop, AA, DT, vecIndvarNameStride, mapToInstrument);
+    errs() << "Before specialization:\n";
     for (auto &kv : mapToInstrument) {
         errs() << *kv.first << " : " << kv.second << '\n';
     }
 
+    MapLocFlagToInstrument mapToInstrumentSpecial;
+    for (auto &kv : mapToInstrument) {
+        if (setArrayListInst.find(kv.first) != setArrayListInst.end()) {
+            mapToInstrumentSpecial[kv.first] = kv.second;
+        }
+    }
+    errs() << "After specialization:\n";
+    for (auto &kv : mapToInstrumentSpecial) {
+        errs() << *kv.first << " : " << kv.second << '\n';
+    }
+
     InstrumentMain();
-    InstrumentInnerLoop(pLoop, DT, mapToInstrument);
+    InstrumentInnerLoop(pLoop, DT, mapToInstrumentSpecial);
 
     return false;
 }
@@ -599,7 +631,8 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     return true;
 }
 
-void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument) {
+void
+LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument) {
 
     set<BasicBlock *> setBlocksInLoop;
     for (auto BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
@@ -1048,7 +1081,7 @@ void LoopInstrumentor::InsertBBBeforeExit(Loop *pLoop, DominatorTree &DT, ValueT
 
     Function *pFunction = pLoop->getHeader()->getParent();
 
-    SmallVector<BasicBlock*, 4> vecExitBlock;
+    SmallVector<BasicBlock *, 4> vecExitBlock;
     pLoop->getExitBlocks(vecExitBlock);
 
     SmallDenseSet<BasicBlock *> setNonDomExitBlock;
@@ -1071,7 +1104,8 @@ void LoopInstrumentor::InsertBBBeforeExit(Loop *pLoop, DominatorTree &DT, ValueT
     SmallDenseSet<Loop::Edge> setNonDomExitEdge;
     for (auto &exitEdge : vecExitEdge) {
         const BasicBlock *outsideBlock = exitEdge.second;
-        if (outsideBlock && std::find(setNonDomExitBlock.begin(), setNonDomExitBlock.end(), outsideBlock) != setNonDomExitBlock.end()) {
+        if (outsideBlock &&
+            std::find(setNonDomExitBlock.begin(), setNonDomExitBlock.end(), outsideBlock) != setNonDomExitBlock.end()) {
             setNonDomExitEdge.insert(exitEdge);
         }
     }
