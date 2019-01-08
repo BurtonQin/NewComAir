@@ -38,6 +38,9 @@ def generate_input(i):
 def run_time_command(target, result, my_env=None):
 
 	print(target)
+
+#	output_path = "tmp.txt"
+#	outfile = open(output_path, "w")
 	
 	inputs = []
 	exe_times = []
@@ -48,9 +51,13 @@ def run_time_command(target, result, my_env=None):
 		command = [target, file_name, CONSTANT_SONG]
 		start = time.time()
 		if my_env:
-			subprocess.run(command, stdout=DEVNULL, env=my_env, check=True)
+			#subprocess.run(command, stdout=DEVNULL, env=my_env, check=True)
+			#subprocess.run(command, stdout=outfile, env=my_env, check=True)
+			subprocess.run(command, env=my_env, check=True)
 		else:
-			subprocess.run(command, stdout=DEVNULL, check=True)
+			#subprocess.run(command, stdout=DEVNULL, check=True)
+			#subprocess.run(command, stdout=outfile, check=True)
+			subprocess.run(command, env=my_env, check=True)
 		exe_times.append('%.5f' % (time.time() - start))
 
 	df = pd.DataFrame(data={'inputs': inputs, 'time': exe_times})
@@ -60,6 +67,8 @@ def run_time_command(target, result, my_env=None):
 	for t in exe_times:
 		sum += float(t)
 	print('%.5f' % (sum/len(exe_times)))
+
+#	outfile.close()
 
 
 # cd build; make -f ../Makefile.clonesample OP_LEVEL=2 ELSEIF=-bElseIf install; cd ..

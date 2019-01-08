@@ -7,6 +7,11 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/IR/Instruction.h>
 
+struct InstSCEV {
+    const llvm::Instruction *pInst;
+    const llvm::SCEV *pSCEV;
+};
+
 struct IndvarFinder : public llvm::ModulePass {
 
     static char ID;
@@ -19,8 +24,7 @@ struct IndvarFinder : public llvm::ModulePass {
 
 private:
 
-    std::map<const llvm::Instruction *, const llvm::SCEV *>
-    searchInstSCEV(llvm::Loop *pLoop, llvm::ScalarEvolution &SE);
+    std::vector<InstSCEV> searchInstSCEV(llvm::Loop *pLoop, llvm::ScalarEvolution &SE);
 
     const llvm::SCEV *searchStride(const llvm::SCEV *scev, llvm::ScalarEvolution &SE);
 

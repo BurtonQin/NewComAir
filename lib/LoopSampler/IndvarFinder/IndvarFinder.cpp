@@ -2,7 +2,7 @@
 
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Support/FileSystem.h>
-#include "Common/ArrayLinkedIndentifier.h"  // TODO: name conflicts with Common/Search.h
+#include "Common/ArrayLinkedIndentifier.h"
 
 using namespace llvm;
 using std::map;
@@ -23,6 +23,8 @@ static cl::opt<std::string> strFuncName("strFunc",
                                         cl::desc("Function Name"), cl::Optional,
                                         cl::value_desc("strFuncName"));
 
+static const char *outputFilePath = "indvar.info";
+
 char IndvarFinder::ID = 0;
 
 IndvarFinder::IndvarFinder() : ModulePass(ID) {
@@ -38,7 +40,7 @@ void IndvarFinder::getAnalysisUsage(AnalysisUsage &AU) const {
 bool IndvarFinder::runOnModule(Module &M) {
 
     std::error_code ec;
-    raw_fd_ostream myfile("indvar.info", ec, sys::fs::OpenFlags::F_RW);
+    raw_fd_ostream myfile(outputFilePath, ec, sys::fs::OpenFlags::F_RW);
 
     Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
     if (!pFunction) {
@@ -51,21 +53,40 @@ bool IndvarFinder::runOnModule(Module &M) {
 
     Loop *pLoop = searchLoopByLineNo(pFunction, &LoopInfo, uSrcLine);
 
-    auto mapInstSCEV = searchInstSCEV(pLoop, SE);
-    for (auto &kv : mapInstSCEV) {
-        auto stride = searchStride(kv.second, SE);
-        const Instruction *pInst = kv.first;
+    auto vecInstSCEV = searchInstSCEV(pLoop, SE);
+
+    for (auto &is : vecInstSCEV) {
+        auto stride = searchStride(is.pSCEV, SE);
+        if (!stride) {
+            errs() << "Cannot find the Stride\n";
+            continue;
+        }
+        const Instruction *pInst = is.pInst;
 
         unsigned operandIdx = 0;
         if (pInst->getOpcode() == Instruction::Store) {
             operandIdx = 1;
         } else if (pInst->getOpcode() != Instruction::Load) {
+            errs() << "Indvar not Load or Store\n";
             continue;
         }
-        errs() << pInst->getOperand(operandIdx)->getName() << '\n';
+
+        auto operand = pInst->getOperand(operandIdx);
+        if (!operand) {
+            errs() << "Indvar has no operand\n";
+            continue;
+        }
+
+        auto indvarName = operand->getName();
+        if (indvarName.empty()) {
+            errs() << "Indvar has no name\n";
+            continue;
+        }
+
+        errs() << indvarName << '\t';
         errs() << *stride << '\n';
 
-        myfile << pInst->getOperand(operandIdx)->getName() << '\n';
+        myfile << indvarName << '\t';
         myfile << *stride << '\n';
     }
 
@@ -74,10 +95,9 @@ bool IndvarFinder::runOnModule(Module &M) {
     return false;
 }
 
-std::map<const llvm::Instruction *, const llvm::SCEV *>
-IndvarFinder::searchInstSCEV(llvm::Loop *pLoop, llvm::ScalarEvolution &SE) {
+std::vector<InstSCEV> IndvarFinder::searchInstSCEV(llvm::Loop *pLoop, llvm::ScalarEvolution &SE) {
 
-    std::map<const llvm::Instruction *, const llvm::SCEV *> mapInstSCEV;
+    std::vector<InstSCEV> vecInstSCEV;
 
     for (auto &BB : pLoop->getBlocks()) {
         for (auto &II : *BB) {
@@ -92,14 +112,14 @@ IndvarFinder::searchInstSCEV(llvm::Loop *pLoop, llvm::ScalarEvolution &SE) {
 
             if (operand) {
                 if (SE.isSCEVable(operand->getType())) {
-                    const SCEV *scev = SE.getSCEV(operand);
-                    mapInstSCEV[pInst] = scev;
+                    const SCEV *pSCEV = SE.getSCEV(operand);
+                    vecInstSCEV.push_back(InstSCEV{pInst, pSCEV});
                 }
             }
         }
     }
 
-    return mapInstSCEV;
+    return vecInstSCEV;
 }
 
 const llvm::SCEV *IndvarFinder::searchStride(const llvm::SCEV *scev, llvm::ScalarEvolution &SE) {

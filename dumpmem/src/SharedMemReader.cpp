@@ -7,6 +7,8 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <vector>
+#include <fstream>
 
 #include "ParseRecord.h"
 
@@ -21,8 +23,8 @@ int openSharedMem(const char *sharedMemName, int &fd, char *&pcBuffer) {
         fprintf(stderr, "fstruncate failed: %s\n", strerror(errno));
         return errno;
     }
-    pcBuffer = (char *) mmap(0, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (pcBuffer == NULL) {
+    pcBuffer = (char *) mmap(nullptr, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (pcBuffer == nullptr) {
         fprintf(stderr, "mmap failed: %s\n", strerror(errno));
         return errno;
     }
@@ -48,7 +50,7 @@ int closeSharedMem(const char *sharedMemName, int fd, bool clearData) {
     return 0;
 }
 
-int openDebugLogFile(const char *logFileName, FILE *pFile) {
+int openDebugLogFile(const char *logFileName, FILE *&pFile) {
     pFile = fopen(logFileName, "w");
     if (pFile == nullptr) {
         fprintf(stderr, "file open failed: %s\n", strerror(errno));
@@ -61,24 +63,22 @@ int closeDebugLogFile(FILE *pFile) {
     return fclose(pFile);
 }
 
-int readStride(const char *indvarFileName, int &stride) {
+int readStrides(const char *indvarFileName, std::vector<int> &vecStride) {
 
-    FILE *pFile = fopen(indvarFileName, "r");
-    if (pFile == nullptr) {
+    std::ifstream infile(indvarFileName);
+    if (!infile) {
         fprintf(stderr, "file open failed: %s\n", strerror(errno));
         return errno;
     }
-    const
-    unsigned LINE_BUFFER_SIZE = 256;
-    char line[LINE_BUFFER_SIZE];
-    if (fgets(line, sizeof(line), pFile)) {  // the first line is indvar name
-        if (fgets(line, sizeof(line), pFile)) {  // the second line is stride
-            stride = abs(atoi(line));
-            return 0;
-        }
+
+    std::string indvarName;
+    int stride;
+    while (infile >> indvarName >> stride) {
+        vecStride.push_back(stride);
     }
-    fprintf(stderr, "file format error\n");
-    return -1;
+
+    infile.close();
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -97,30 +97,30 @@ int main(int argc, char *argv[]) {
         indvarInfoPath = g_IndvarInfo;
     }
     int fd = 0;
-    char *pcBuffer = NULL;
+    char *pcBuffer = nullptr;
     auto err = openSharedMem(sharedMemName, fd, pcBuffer);
     if (err != 0) {
         return err;
     }
-    int stride;
-    err = readStride(indvarInfoPath, stride);
+    std::vector<int> vecStride;
+    err = readStrides(indvarInfoPath, vecStride);
     if (err != 0) {
         return err;
     }
-//#ifdef DEBUG
-//    FILE *pFile;
-//    openDebugLogFile(sharedMemName, pFile);
-//#endif
-//
-//#ifdef DEBUG
-//    parseRecord(pcBuffer, stride, pFile);
-//#else
-    parseRecord(pcBuffer, stride, NULL);
-//#endif
-//
-//#ifdef DEBUG
-//    closeDebugLogFile(pFile);
-//#endif
-//
+#ifdef DEBUG
+    FILE *pFile;
+    openDebugLogFile(sharedMemName, pFile);
+#endif
+
+#ifdef DEBUG
+    parseRecord(pcBuffer, vecStride, pFile);
+#else
+    parseRecord(pcBuffer, vecStride, nullptr);
+#endif
+
+#ifdef DEBUG
+    closeDebugLogFile(pFile);
+#endif
+
     closeSharedMem(sharedMemName, fd);
 }

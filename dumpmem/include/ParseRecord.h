@@ -2,6 +2,7 @@
 #define NEWCOMAIR_DUMPMEM_PARSERECORD_H
 
 #include <map>
+#include <vector>
 
 enum RecordFlag : unsigned {
     Terminator = 0,
@@ -26,6 +27,6 @@ struct struct_stMemRecord {
 
 typedef std::map<unsigned long, OneLoopRecordFlag> OneLoopRecordTy;
 
-void parseRecord(char *pcBuffer, int stride, FILE *pFile = NULL);
+void parseRecord(char *pcBuffer, const std::vector<int> &stride, FILE *pFile = nullptr);
 
 #endif //NEWCOMAIR_DUMPMEM_PARSERECORD_H

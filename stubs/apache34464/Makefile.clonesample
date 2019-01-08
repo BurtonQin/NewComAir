@@ -6,7 +6,6 @@ BELSEIF=
 CXX=clang
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
 OP_CFLAGS=-O${OP_LEVEL} -Xclang -disable-O0-optnone -g -flto
-# -fno-vectorize -fno-slp-vectorize
 LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
 TARGET=target.clonesample.O${OP_LEVEL}${BELSEIF}
 
@@ -15,6 +14,7 @@ BUILD_DIR=${PROJECT_DIR}cmake-build-debug/
 LIB_DIR=${BUILD_DIR}lib/
 ID_PASS=${LIB_DIR}IDAssigner/libIDAssignerPass.so
 LOOP_INSTRUMENT_PASS=${LIB_DIR}LoopSampler/LoopInstrumentor/libLoopInstrumentPass.so
+MEMTOREG_PROMOTE_PASS=${LIB_DIR}LoopSampler/MemToRegPromoter/libMemToRegPromotePass.so
 COMMON_LIB=${LIB_DIR}Common/libCommonLib.a
 RUNTIME_DIR=${BUILD_DIR}runtime/
 RUNTIME_LIB=${RUNTIME_DIR}libRuntimeLib.a

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <set>
+#include <deque>
 #include <algorithm>
 
 #ifdef DEBUG
@@ -11,22 +12,62 @@
 # define DEBUG_PRINT(x) do {} while (0)
 #endif
 
-static int
-parseOneLoop(unsigned long beginAddr, unsigned long endAddr, OneLoopRecordTy &oneLoopRecord, unsigned byteNum,
-             int stride) {
+struct IndvarInfo {
+    struct_stMemRecord beginRecord;
+    struct_stMemRecord endRecord;
+    int stride;
+};
 
-    unsigned byteCounter = 0;
-    for (auto addr = beginAddr; addr <= endAddr; addr += 1) {
-        if (oneLoopRecord[addr] == OneLoopRecordFlag::Uninitialized) {
-            oneLoopRecord[addr] = OneLoopRecordFlag::FirstLoad;
+typedef std::vector<IndvarInfo> VecIndvarInfoTy;
+
+// parseOneLoop gets indvar address access
+// It is called after non-indvar address access calculated
+// Here it is assumed that there is no address access conflicts between "Load indvar" and "Store non-indvar"
+// If it is not satisfied (which is rare), then the logic should be re-checked.
+static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &oneLoopRecord) {
+
+    for (const auto &indvarInfo : vecIndvarInfo) {
+
+        auto stride = indvarInfo.stride;
+        if (stride == 0) {
+            fprintf(stderr, "Stride == 0\n");
+            continue;
         }
-        ++byteCounter;
-        if (byteCounter == byteNum) {
-            byteCounter = 0;
-            addr += byteNum * 8 * (stride - 1);
+
+        auto beginLength = indvarInfo.beginRecord.length;
+        auto endLength = indvarInfo.endRecord.length;
+
+        if (beginLength != endLength) {
+            fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
+            continue;
+        }
+
+        auto &length = beginLength;
+
+        auto byteNum = length / 8;
+
+        auto beginAddr = indvarInfo.beginRecord.address;
+        auto endAddr = indvarInfo.endRecord.address;
+
+        unsigned byteCounter = 0;
+
+        // Assume that stride == 2
+        //        Addr |0|1|2|3|x|x|x|x|8|9|10|11|...
+        // byteCounter |1|2|3|4|------>|1|2|3 |4 |...
+
+        for (auto addr = beginAddr; addr <= endAddr; addr += 1) {
+            if (oneLoopRecord[addr] == OneLoopRecordFlag::Uninitialized) {
+                oneLoopRecord[addr] = OneLoopRecordFlag::FirstLoad;
+            }
+
+            ++byteCounter;
+            // Move byte num of (stride-1)
+            if (byteCounter == byteNum) {
+                byteCounter = 0;
+                addr += byteNum * (stride - 1);
+            }
         }
     }
-    return 0;
 }
 
 static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &allDistinctAddr, unsigned long &sumOfMiCi,
@@ -55,18 +96,22 @@ static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &al
     oneLoopRecord.clear();
 }
 
-void parseRecord(char *pcBuffer, int stride, FILE *pFile) {
+void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile) {
 
-    if (pcBuffer == NULL) {
+    if (pcBuffer == nullptr) {
         printf("NULL buffer\n");
     }
 
     bool endFlag = false;
-    struct_stMemRecord record;
 
-    unsigned long beginAddr;
-    unsigned long endAddr;
-    unsigned byteNum = 0;
+    VecIndvarInfoTy vecIndvarInfo;
+
+    std::deque<int> dqInitStride(vecStride.begin(), vecStride.end());
+    std::deque<int> dqStride = dqInitStride;
+
+    struct_stMemRecord record{0UL, 0U, RecordFlag::Terminator};
+    // First indvarBegin, first indvarEnd
+    std::deque<struct_stMemRecord> dqIndvarBeginRecord;
 
     OneLoopRecordTy oneLoopRecord;  // <address, OneLoopRecordFlag>
     std::set<unsigned long> oneLoopDistinctAddr;  // Ci: ith Distinct First Load Address
@@ -88,8 +133,10 @@ void parseRecord(char *pcBuffer, int stride, FILE *pFile) {
                     if (record.address == 0UL && record.length != 0U) {
                         auto cost = record.length;
                         DEBUG_PRINT(("cost: %u\n", cost));
-                        parseOneLoop(beginAddr, endAddr, oneLoopRecord, byteNum, stride);
+                        parseOneLoop(vecIndvarInfo, oneLoopRecord);
+                        vecIndvarInfo.clear();
                         calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi);
+                        dqStride = dqInitStride;
                         if (sumOfRi == 0) {
                             DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, cost=%u\n", sumOfMiCi, sumOfRi, cost));
                             printf("%u,%u\n", 0, cost);
@@ -106,8 +153,10 @@ void parseRecord(char *pcBuffer, int stride, FILE *pFile) {
             }
             case RecordFlag::Delimiter: {
                 if (i > 0) {  // skip the first loop (loop begins with delimiter)
-                    parseOneLoop(beginAddr, endAddr, oneLoopRecord, byteNum, stride);
+                    parseOneLoop(vecIndvarInfo, oneLoopRecord);
+                    vecIndvarInfo.clear();
                     calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi);
+                    dqStride = dqInitStride;
                 }
                 break;
             }
@@ -128,14 +177,32 @@ void parseRecord(char *pcBuffer, int stride, FILE *pFile) {
                 break;
             }
             case RecordFlag::LoopBeginFlag: {
-                beginAddr = record.address;
-                if (byteNum == 0) {
-                    byteNum = record.length / 8;
-                }
+                dqIndvarBeginRecord.push_back(record);
                 break;
             }
             case RecordFlag::LoopEndFlag: {
-                endAddr = record.address;
+
+                // get stride
+                auto stride = dqStride.front();
+                dqStride.pop_front();
+                if (stride == 0) {
+                    fprintf(stderr, "Stride == 0\n");
+                    continue;
+                }
+
+                // get indvar begin
+                auto indvarBeginRecord = dqIndvarBeginRecord.front();
+                dqIndvarBeginRecord.pop_front();
+
+                // check indvar begin and end length
+                auto &indvarEndRecord = record;
+                if (indvarBeginRecord.length != indvarEndRecord.length) {
+                    fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
+                    continue;
+                }
+
+                IndvarInfo indvarInfo{indvarBeginRecord, record, stride};
+                vecIndvarInfo.push_back(indvarInfo);
                 break;
             }
             default: {

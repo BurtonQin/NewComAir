@@ -10,9 +10,17 @@
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/Transforms/Utils/ValueMapper.h>
+
 #include "Common/LocateInstrument.h"
 
 using namespace llvm;
+
+struct IndvarNameStride {
+    const std::string indvarName;
+    const int stride;
+};
+
+typedef std::vector<IndvarNameStride> VecIndvarNameStrideTy;
 
 struct LoopInstrumentor : public ModulePass {
 
@@ -45,9 +53,10 @@ private:
     void InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrument &mapToInstrument);
 
     // Helper
-    bool ReadIndvarStride(std::string fileName);
+    bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
 
     bool SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, DominatorTree &DT,
+                                const VecIndvarNameStrideTy &vecIndvarNameStride,
                                 MapLocFlagToInstrument &mapToInstrument);
 
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,
@@ -70,7 +79,7 @@ private:
                                   std::set<BasicBlock *> setInterBlock);
 
     // Inline instrument
-    void InlineNumLocalCost(Loop *pLoop);
+    void InlineNumGlobalCost(Loop *pLoop);
 
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
 
@@ -91,9 +100,7 @@ private:
 
     // Module
     Module *pModule;
-    std::set<int> setInstID;
-    // std::vector<std::pair<Function *, int> > vecParaID;
-    std::string strIndVar;
+    std::set<std::uint64_t> setInstID;
 
     // Type
     Type *VoidType;
@@ -132,7 +139,6 @@ private:
     ConstantInt *ConstantInt3;  // store
     ConstantInt *ConstantInt4;  // loop begin
     ConstantInt *ConstantInt5;  // loop end
-    ConstantInt *ConstantInt6;  // loop stride
     ConstantInt *ConstantLong16;
     ConstantPointerNull *ConstantNULL;
     Constant *SAMPLE_RATE_ptr;
