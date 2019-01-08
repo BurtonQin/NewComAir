@@ -50,7 +50,7 @@ private:
     // Instrument
     void InstrumentMain();
 
-    void InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrument &mapToInstrument);
+    void InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument);
 
     // Helper
     bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
@@ -69,7 +69,8 @@ private:
     void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
                         std::vector<BasicBlock *> &vecCloned);
 
-    void InsertBBBeforeExit(Loop *pLoop, ValueToValueMapTy &VMap, std::map<BasicBlock *, BasicBlock *> &mapExit2Inter);
+    void InsertBBBeforeExit(Loop *pLoop, DominatorTree &DT, ValueToValueMapTy &VMap,
+                            std::map<BasicBlock *, BasicBlock *> &mapExit2Inter);
 
     // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);

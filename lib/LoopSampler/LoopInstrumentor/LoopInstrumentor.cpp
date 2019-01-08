@@ -80,7 +80,7 @@ bool LoopInstrumentor::runOnModule(Module &M) {
     }
 
     InstrumentMain();
-    InstrumentInnerLoop(pLoop, mapToInstrument);
+    InstrumentInnerLoop(pLoop, DT, mapToInstrument);
 
     return false;
 }
@@ -599,7 +599,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     return true;
 }
 
-void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrument &mapToInstrument) {
+void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument) {
 
     set<BasicBlock *> setBlocksInLoop;
     for (auto BB = pInnerLoop->block_begin(); BB != pInnerLoop->block_end(); BB++) {
@@ -635,7 +635,7 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrum
     CloneInnerLoop(pInnerLoop, vecAdd, VMap, vecCloned);
 
     map<BasicBlock *, BasicBlock *> mapExit2Inter;
-    InsertBBBeforeExit(pInnerLoop, VMap, mapExit2Inter);
+    InsertBBBeforeExit(pInnerLoop, DT, VMap, mapExit2Inter);
 
     MapLocFlagToInstrument mapToInstrumentCloned;
     for (auto &kv : mapToInstrument) {
@@ -651,6 +651,7 @@ void LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, MapLocFlagToInstrum
     Instruction *pTermInst = pClonedBody->getTerminator();
 
     set<BasicBlock *> setClonedInterBlock;
+
     for (auto &kv : mapExit2Inter) {
         setClonedInterBlock.insert(kv.second);
     }
@@ -1042,15 +1043,40 @@ void LoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecAdd,
     }
 }
 
-void LoopInstrumentor::InsertBBBeforeExit(Loop *pLoop, ValueToValueMapTy &VMap,
+void LoopInstrumentor::InsertBBBeforeExit(Loop *pLoop, DominatorTree &DT, ValueToValueMapTy &VMap,
                                           map<BasicBlock *, BasicBlock *> &mapExit2Inter) {
 
     Function *pFunction = pLoop->getHeader()->getParent();
 
+    SmallVector<BasicBlock*, 4> vecExitBlock;
+    pLoop->getExitBlocks(vecExitBlock);
+
+    SmallDenseSet<BasicBlock *> setNonDomExitBlock;
+    for (const auto &dominatee : vecExitBlock) {
+        bool isDominated = false;
+        for (const auto &dominator : vecExitBlock) {
+            if (dominatee != dominator && DT.dominates(dominator, dominatee)) {
+                isDominated = true;
+                break;
+            }
+        }
+        if (!isDominated) {
+            setNonDomExitBlock.insert(dominatee);
+        }
+    }
+
     SmallVector<Loop::Edge, 4> vecExitEdge;
     pLoop->getExitEdges(vecExitEdge);
 
+    SmallDenseSet<Loop::Edge> setNonDomExitEdge;
     for (auto &exitEdge : vecExitEdge) {
+        const BasicBlock *outsideBlock = exitEdge.second;
+        if (outsideBlock && std::find(setNonDomExitBlock.begin(), setNonDomExitBlock.end(), outsideBlock) != setNonDomExitBlock.end()) {
+            setNonDomExitEdge.insert(exitEdge);
+        }
+    }
+
+    for (auto &exitEdge : setNonDomExitEdge) {
         const BasicBlock *insideBlock = exitEdge.first;
         const BasicBlock *outsideBlock = exitEdge.second;
 
