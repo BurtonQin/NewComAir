@@ -71,7 +71,7 @@ static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &
 }
 
 static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &allDistinctAddr, unsigned long &sumOfMiCi,
-                     unsigned long &sumOfRi) {
+                     unsigned long &sumOfRi, unsigned long &oneLoopIOFuncSize, unsigned long &allIOFuncSize) {
 
     std::set<unsigned long> oneLoopDistinctAddr;
     for (auto &kv : oneLoopRecord) {
@@ -80,9 +80,14 @@ static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &al
         }
     }
 
-    sumOfMiCi += allDistinctAddr.size() * oneLoopDistinctAddr.size();
+    if (allDistinctAddr.empty()) {
+        allDistinctAddr.insert(oneLoopDistinctAddr.begin(), oneLoopDistinctAddr.end());
+        allIOFuncSize = oneLoopIOFuncSize;
+    }
 
-    DEBUG_PRINT(("sumOfMiCi: %lu, Mi: %lu, Ci: %lu\n", sumOfMiCi, allDistinctAddr.size(), oneLoopDistinctAddr.size()));
+    sumOfMiCi += (allDistinctAddr.size() + allIOFuncSize) * (oneLoopDistinctAddr.size() + oneLoopIOFuncSize);
+
+    DEBUG_PRINT(("sumOfMiCi: %lu, Mi: %lu+%lu, Ci: %lu+%lu\n", sumOfMiCi, allDistinctAddr.size(), allIOFuncSize, oneLoopDistinctAddr.size(), oneLoopIOFuncSize));
 
     std::set<unsigned long> intersect;
     std::set_intersection(allDistinctAddr.begin(), allDistinctAddr.end(), oneLoopDistinctAddr.begin(),
@@ -94,6 +99,8 @@ static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &al
     allDistinctAddr.insert(oneLoopDistinctAddr.begin(), oneLoopDistinctAddr.end());
 
     oneLoopRecord.clear();
+    allIOFuncSize += oneLoopIOFuncSize;
+    oneLoopIOFuncSize = 0;
 }
 
 void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile) {
@@ -115,6 +122,9 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
 
     OneLoopRecordTy oneLoopRecord;  // <address, OneLoopRecordFlag>
     std::set<unsigned long> oneLoopDistinctAddr;  // Ci: ith Distinct First Load Address
+    unsigned long oneLoopIOFuncSize = 0;  // when used, clear
+    unsigned long allIOFuncSize = 0;
+
     std::set<unsigned long> allDistinctAddr;  // Mi: i-1 Distinct First Load Addresses
 
     unsigned long sumOfMiCi = 0;
@@ -135,7 +145,7 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
                         DEBUG_PRINT(("cost: %u\n", cost));
                         parseOneLoop(vecIndvarInfo, oneLoopRecord);
                         vecIndvarInfo.clear();
-                        calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi);
+                        calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi, oneLoopIOFuncSize, allIOFuncSize);
                         dqStride = dqInitStride;
                         if (sumOfRi == 0) {
                             DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, cost=%u\n", sumOfMiCi, sumOfRi, cost));
@@ -155,15 +165,21 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
                 if (i > 0) {  // skip the first loop (loop begins with delimiter)
                     parseOneLoop(vecIndvarInfo, oneLoopRecord);
                     vecIndvarInfo.clear();
-                    calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi);
+                    calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi, oneLoopIOFuncSize, allIOFuncSize);
                     dqStride = dqInitStride;
                 }
                 break;
             }
             case RecordFlag::LoadFlag: {
-                for (unsigned j = 0; j < record.length; j += 8) {
-                    if (oneLoopRecord[record.address + j] == OneLoopRecordFlag::Uninitialized) {
-                        oneLoopRecord[record.address + j] = OneLoopRecordFlag::FirstLoad;
+
+                if (record.address == 0UL) {
+                    // IO Function update RMS
+                    oneLoopIOFuncSize += 1;
+                } else {
+                    for (unsigned j = 0; j < record.length; j += 8) {
+                        if (oneLoopRecord[record.address + j] == OneLoopRecordFlag::Uninitialized) {
+                            oneLoopRecord[record.address + j] = OneLoopRecordFlag::FirstLoad;
+                        }
                     }
                 }
                 break;

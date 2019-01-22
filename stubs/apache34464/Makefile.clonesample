@@ -10,30 +10,43 @@ LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
 TARGET=target.clonesample.O${OP_LEVEL}${BELSEIF}
 
 PROJECT_DIR=/home/boqin/Projects/NewComAir/
+
 BUILD_DIR=${PROJECT_DIR}cmake-build-debug/
 LIB_DIR=${BUILD_DIR}lib/
+INDVAR_FIND_PASS=${LIB_DIR}LoopSampler/IndvarFinder/libIndvarFindPass.so
 ID_PASS=${LIB_DIR}IDAssigner/libIDAssignerPass.so
 LOOP_INSTRUMENT_PASS=${LIB_DIR}LoopSampler/LoopInstrumentor/libLoopInstrumentPass.so
 MEMTOREG_PROMOTE_PASS=${LIB_DIR}LoopSampler/MemToRegPromoter/libMemToRegPromotePass.so
 COMMON_LIB=${LIB_DIR}Common/libCommonLib.a
 RUNTIME_DIR=${BUILD_DIR}runtime/
 RUNTIME_LIB=${RUNTIME_DIR}libRuntimeLib.a
+
 BUG_DIR=${PROJECT_DIR}stubs/apache34464/
 INSTALL_DIR=${BUG_DIR}targets.O${OP_LEVEL}/
-SRC_FILE=${PROJECT_DIR}stubs/apache34464/Telnet.c
+SRC_FILE=${BUG_DIR}Telnet.c
+LINENO=103
+FUNCNAME=indexOf
+
+INDVAR_INFO=indvar.info
 
 .PHONY: clean install
 
 ${TARGET}: ${TARGET}.lalls.bc ${RUNTIME_LIB}
 	${CXX} ${OP_CFLAGS} ${LDFLAGS} $< -l${RUNTIME_LIB} -lm -lrt -o $@
 
-${TARGET}.lalls.bc: ${TARGET}.bc.id ${LOOP_INSTRUMENT_PASS} ${SRC_FILE}
+${TARGET}.lalls.bc: ${TARGET}.bc.id ${LOOP_INSTRUMENT_PASS} ${SRC_FILE} ${INDVAR_INFO}
 	opt -load ${LOOP_INSTRUMENT_PASS} -loop-instrument \
 	 -noLine 103 -strFile ${SRC_FILE} \
 	 -strFunc indexOf ${BELSEIF} $< > $@
 
 ${TARGET}.bc.id: ${TARGET}.ls.bc ${ID_PASS}
 	opt -load ${ID_PASS} -tag-id $< > $@
+
+${INDVAR_INFO}: ${TARGET}.m2r.bc ${INDVAR_FIND_PASS}
+	opt -load ${INDVAR_FIND_PASS} -indvar-find -noLine ${LINENO} -strFile ${SRC_FILE} -strFunc ${FUNCNAME} $< > /dev/null
+
+${TARGET}.m2r.bc: ${TARGET}.ls.bc
+	opt -mem2reg $< > $@
 
 ${TARGET}.ls.bc: ${TARGET}.bc
 	opt -loop-simplify $< > $@

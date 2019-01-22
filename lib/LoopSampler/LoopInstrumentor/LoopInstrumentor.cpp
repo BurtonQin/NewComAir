@@ -16,7 +16,7 @@ using std::set;
 
 static RegisterPass<LoopInstrumentor> X("loop-instrument",
                                         "instrument a loop accessing an array element in each iteration",
-                                        true, false);
+                                        false, false);
 
 static cl::opt<unsigned> uSrcLine("noLine",
                                   cl::desc("Source Code Line Number for the Loop"), cl::Optional,
@@ -39,15 +39,15 @@ char LoopInstrumentor::ID = 0;
 
 LoopInstrumentor::LoopInstrumentor() : ModulePass(ID) {
     PassRegistry &Registry = *PassRegistry::getPassRegistry();
-    initializeAAResultsWrapperPassPass(Registry);
     initializeDominatorTreeWrapperPassPass(Registry);
+    initializeAAResultsWrapperPassPass(Registry);
     initializeLoopInfoWrapperPassPass(Registry);
 }
 
 void LoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
     AU.setPreservesAll();
-    AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
 }
 
@@ -86,7 +86,7 @@ bool LoopInstrumentor::runOnModule(Module &M) {
     set<Instruction *> setArrayListInst;
     for (auto &pVal : setArrayListValue) {
         if (auto pInst = dyn_cast<Instruction>(pVal)) {
-            errs() << "Instruction to be instrumented: " << *pInst << '\n';
+            errs() << "Array/Linkedlist related instruction: " << *pInst << '\n';
             setArrayListInst.insert(pInst);
         } else {
             errs() << "Not an instruction" << pVal->getName() << '\n';
@@ -95,7 +95,7 @@ bool LoopInstrumentor::runOnModule(Module &M) {
 
     MapLocFlagToInstrument mapToInstrument;
     SearchToBeInstrumented(pLoop, AA, DT, vecIndvarNameStride, mapToInstrument);
-    errs() << "Before specialization:\n";
+    errs() << "Before Array/LinkedList specialization:\n";
     for (auto &kv : mapToInstrument) {
         errs() << *kv.first << " : " << kv.second << '\n';
     }
@@ -106,13 +106,18 @@ bool LoopInstrumentor::runOnModule(Module &M) {
             mapToInstrumentSpecial[kv.first] = kv.second;
         }
     }
-    errs() << "After specialization:\n";
+    errs() << "After Array/LinkedList specialization:\n";
     for (auto &kv : mapToInstrumentSpecial) {
         errs() << *kv.first << " : " << kv.second << '\n';
     }
 
     InstrumentMain();
-    InstrumentInnerLoop(pLoop, DT, mapToInstrumentSpecial);
+
+    if (!mapToInstrumentSpecial.empty()) {
+        InstrumentInnerLoop(pLoop, DT, mapToInstrumentSpecial);
+    } else {
+        InstrumentInnerLoop(pLoop, DT, mapToInstrument);
+    }
 
     return false;
 }
@@ -368,15 +373,16 @@ void LoopInstrumentor::InstrumentMain() {
             Instruction *pInst = &II;
             // Instrument FinalizeMemHooks before return.
             if (auto pRet = dyn_cast<ReturnInst>(pInst)) {
+
+                // Output numGlobalCost before return.
+                InlineOutputCost(pRet);
+
                 auto pLoad = new LoadInst(this->iBufferIndex_CPI, "", false, pRet);
                 pLoad->setAlignment(8);
                 pCall = CallInst::Create(this->FinalizeMemHooks, pLoad, "", pRet);
                 pCall->setCallingConv(CallingConv::C);
                 pCall->setTailCall(false);
                 pCall->setAttributes(emptyList);
-
-                // Output numGlobalCost before return.
-                InlineOutputCost(pRet);
 
             } else if (isa<CallInst>(pInst) || isa<InvokeInst>(pInst)) {
                 CallSite cs(pInst);
@@ -387,15 +393,19 @@ void LoopInstrumentor::InstrumentMain() {
                 // Instrument FinalizeMemHooks before calling exit or functions similar to exit.
                 // TODO: any other functions similar to exit?
                 if (pCalled->getName() == "exit" || pCalled->getName() == "_ZL9mysql_endi") {
-                    auto pLoad = new LoadInst(this->iBufferIndex_CPI, "", false, pRet);
+
+                    // Output numGlobalCost before exit.
+                    InlineOutputCost(pInst);
+
+                    auto pLoad = new LoadInst(this->iBufferIndex_CPI, "", false, pInst);
                     pLoad->setAlignment(8);
-                    pCall = CallInst::Create(this->FinalizeMemHooks, "", pInst);
+                    pCall = CallInst::Create(this->FinalizeMemHooks, pLoad, "", pInst);
                     pCall->setCallingConv(CallingConv::C);
                     pCall->setTailCall(false);
                     pCall->setAttributes(emptyList);
 
                     // Output numGlobalCost before exit.
-                    InlineOutputCost(pRet);
+                    InlineOutputCost(pInst);
                 }
             }
         }
@@ -422,15 +432,16 @@ bool LoopInstrumentor::ReadIndvarStride(const char *filePath, VecIndvarNameStrid
 
 static bool isMustAlias(Instruction *pInst, set<Instruction *> &setNotMustAlias, AliasAnalysis &AA) {
 
-    bool isMustAlias = false;
-    for (const auto &pSetInst : setNotMustAlias) {
-        if (AA.isMustAlias(pInst, pSetInst)) {
-            errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
-            isMustAlias = true;
-            break;
-        }
-    }
-    return isMustAlias;
+//    bool isMustAlias = false;
+//    for (const auto &pSetInst : setNotMustAlias) {
+//        if (AA.isMustAlias(pInst, pSetInst)) {
+//            errs() << "Must Alias:" << *pInst << "\n\t" << *pSetInst << '\n';
+//            isMustAlias = true;
+//            break;
+//        }
+//    }
+//    return isMustAlias;
+    return false;
 }
 
 static bool isIndvar(Value *value, const VecIndvarNameStrideTy &vecIndvarNameStride) {
@@ -469,7 +480,8 @@ enum NCInstType : unsigned {
     NCOthers,
     NCLoad,
     NCStore,
-    NCMemIntrinsic
+    NCMemIntrinsic,
+    NCCallOrInvoke
 };
 
 static unsigned parseInst(Instruction *pInst, NCAddrType &addrType) {
@@ -481,8 +493,27 @@ static unsigned parseInst(Instruction *pInst, NCAddrType &addrType) {
         if (getNCAddrType(pInst, 1, addrType)) {
             return NCInstType::NCStore;
         }
-    } else if (isa<MemIntrinsic>(pInst)) {
+    } else if (isa<MemSetInst>(pInst)) {
+        return NCInstType::NCOthers;
+    } else if (dyn_cast<MemTransferInst>(pInst)) {
         return NCInstType::NCMemIntrinsic;
+    } else if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
+        Function *pFunc = pCallInst->getCalledFunction();
+        if (pFunc) {
+            if (pFunc->getName().str() == "fgetc" ||
+            pFunc->getName().str() == "fread") {
+                return NCInstType::NCCallOrInvoke;
+            }
+        }
+    } else if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
+        Function *pFunc = pInvokeInst->getCalledFunction();
+        if (pFunc) {
+            if (pFunc->getName().str() == "fgetc" ||
+                pFunc->getName().str() == "fread") {
+                return NCInstType::NCCallOrInvoke;
+            }
+        }
+
     }
     return NCInstType::NCOthers;
 }
@@ -499,9 +530,13 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     set<Instruction *> setNotMustAlias;
     map<NCAddrType, vector<Instruction *>> mapLoadInst;
     map<NCAddrType, vector<Instruction *>> mapStoreInst;
+    set<Instruction *> setMemInstrinsic;
+    set<Instruction *> setCallOrInvoke;
 
     // Traverse Loop to record IndVars (Load/Store), record only one for vars that are alias
     // Note that we must handle all indvars before handling other Vars to guarantee indvars in setNotMustAlias
+
+    errs() << "enter SearchToBeInstrumented\n";
     if (!vecIndvarNameStride.empty()) {
         for (auto BI = pLoop->block_begin(); BI != pLoop->block_end(); BI++) {
             BasicBlock *BB = *BI;
@@ -527,6 +562,13 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                             case NCInstType::NCMemIntrinsic: {
                                 errs() << "MemIntrinsic met\n";
                                 pInst->dump();
+                                setMemInstrinsic.insert(pInst);
+                                break;
+                            }
+                            case NCInstType::NCCallOrInvoke: {
+                                errs() << "IO Function met\n";
+                                pInst->dump();
+                                setCallOrInvoke.insert(pInst);
                                 break;
                             }
                             default: {
@@ -539,6 +581,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
         }
     }
 
+    errs() << "enter Loop to record other Vars\n";
     // Traverse Loop to record other Vars (Load/Store), record only one for vars that are alias
     for (auto BI = pLoop->block_begin(); BI != pLoop->block_end(); BI++) {
         BasicBlock *BB = *BI;
@@ -565,7 +608,13 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                         case NCInstType::NCMemIntrinsic: {
                             errs() << "MemIntrinsic met\n";
                             pInst->dump();
+                            setMemInstrinsic.insert(pInst);
                             break;
+                        }
+                        case NCInstType::NCCallOrInvoke: {
+                            errs() << "IO Function met\n";
+                            pInst->dump();
+                            setCallOrInvoke.insert(pInst);
                         }
                         default: {
                             break;
@@ -576,6 +625,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
         }
     }
 
+    errs() << "enter use dominance to decide\n";
     // Use dominance to decide instrument locations
     for (auto &kv : mapLoadInst) {
 
@@ -626,6 +676,19 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                 break;
             }
         }
+    }
+
+    for (auto &pInst: setMemInstrinsic) {
+        mapToInstrument[pInst] = NCInstrumentLocFlag::Inplace;
+    }
+
+    for (auto &pInst: setCallOrInvoke) {
+        mapToInstrument[pInst] = NCInstrumentLocFlag::Inplace;
+    }
+
+    // TODO: For Debug
+    for (auto &kv: mapToInstrument) {
+        kv.second = NCInstrumentLocFlag::Inplace;
     }
 
     return true;
@@ -1169,61 +1232,75 @@ void LoopInstrumentor::InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToIns
         Instruction *pInst = kv.first;
         NCInstrumentLocFlag flag = kv.second;
 
-        switch (pInst->getOpcode()) {
-            case Instruction::Load: {
-                NCAddrType addrType;
-                if (getNCAddrType(pInst, 0, addrType)) {
-                    switch (flag) {
-                        case NCInstrumentLocFlag::Inplace: {
-                            InlineHookLoad(addrType.pAddr, addrType.pType, kv.first);
-                            break;
-                        }
-                        case NCInstrumentLocFlag::Hoist: {
-                            InlineHookLoad(addrType.pAddr, addrType.pType, pTermOfPreheader);
-                            break;
-                        }
-                        case NCInstrumentLocFlag::HoistSink: {
-                            vecIndvar.push_back(pInst);
-                            break;
-                        }
-                        default: {
-                            errs() << "Unknown NCInstrumentLocFlag: " << kv.first << '\n';
-                            break;
-                        }
-                    }
-                } else {
-                    errs() << "Load fails to get AddrType: " << kv.first << '\n';
-                }
-                break;
+        if (MemTransferInst *pMem = dyn_cast<MemTransferInst>(pInst)) {
+            InlineHookMem(pMem, pInst);
+        } else if (isa<CallInst>(pInst)) {
+            if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
+                Function *pFunc = pCallInst->getCalledFunction();
+                InlineHookIOFunc(pFunc, pInst);
             }
-            case Instruction::Store: {
-                NCAddrType addrType;
-                if (getNCAddrType(pInst, 1, addrType)) {
-                    switch (flag) {
-                        case NCInstrumentLocFlag::Inplace: {
-                            InlineHookStore(addrType.pAddr, addrType.pType, kv.first);
-                            break;
-                        }
-                        case NCInstrumentLocFlag::Hoist: {
-                            InlineHookStore(addrType.pAddr, addrType.pType, pTermOfPreheader);
-                            break;
-                        }
-                        case NCInstrumentLocFlag::HoistSink: {
-                            break;
-                        }
-                        default: {
-                            errs() << "Unknown NCInstrumentLocFlag: " << kv.first << '\n';
-                            break;
-                        }
-                    }
-                } else {
-                    errs() << "Store fails to get AddrType: " << kv.first << '\n';
-                }
-                break;
+        } else if (isa<InvokeInst>(pInst)) {
+            if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
+                Function *pFunc = pInvokeInst->getCalledFunction();
+                InlineHookIOFunc(pFunc, pInst);
             }
-            default: {
-                errs() << "Instrument not Load or Store: " << kv.first << '\n';
-                break;
+        } else {
+            switch (pInst->getOpcode()) {
+                case Instruction::Load: {
+                    NCAddrType addrType;
+                    if (getNCAddrType(pInst, 0, addrType)) {
+                        switch (flag) {
+                            case NCInstrumentLocFlag::Inplace: {
+                                InlineHookLoad(addrType.pAddr, addrType.pType, kv.first);
+                                break;
+                            }
+                            case NCInstrumentLocFlag::Hoist: {
+                                InlineHookLoad(addrType.pAddr, addrType.pType, pTermOfPreheader);
+                                break;
+                            }
+                            case NCInstrumentLocFlag::HoistSink: {
+                                vecIndvar.push_back(pInst);
+                                break;
+                            }
+                            default: {
+                                errs() << "Unknown NCInstrumentLocFlag: " << kv.first << '\n';
+                                break;
+                            }
+                        }
+                    } else {
+                        errs() << "Load fails to get AddrType: " << kv.first << '\n';
+                    }
+                    break;
+                }
+                case Instruction::Store: {
+                    NCAddrType addrType;
+                    if (getNCAddrType(pInst, 1, addrType)) {
+                        switch (flag) {
+                            case NCInstrumentLocFlag::Inplace: {
+                                InlineHookStore(addrType.pAddr, addrType.pType, kv.first);
+                                break;
+                            }
+                            case NCInstrumentLocFlag::Hoist: {
+                                InlineHookStore(addrType.pAddr, addrType.pType, pTermOfPreheader);
+                                break;
+                            }
+                            case NCInstrumentLocFlag::HoistSink: {
+                                break;
+                            }
+                            default: {
+                                errs() << "Unknown NCInstrumentLocFlag: " << kv.first << '\n';
+                                break;
+                            }
+                        }
+                    } else {
+                        errs() << "Store fails to get AddrType: " << kv.first << '\n';
+                    }
+                    break;
+                }
+                default: {
+                    errs() << "Instrument not Load or Store: " << kv.first << '\n';
+                    break;
+                }
             }
         }
     }
@@ -1269,26 +1346,29 @@ void LoopInstrumentor::InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToIns
             RemapInstruction(inst, VMap);
         }
 
-        // Instrument cloned Indvar recorder in preheader
-        Instruction *pClonedIndvar = vecClonedInst[vecClonedInst.size() - 1];  // the last is the cloned indvar
-        switch (pClonedIndvar->getOpcode()) {
-            case Instruction::Load: {
-                NCAddrType addrType;
-                if (getNCAddrType(pClonedIndvar, 0, addrType)) {
-                    InlineHookLoopBegin(addrType.pAddr, addrType.pType, pClonedIndvar);
+        if (!vecClonedInst.empty()) {
+
+            // Instrument cloned Indvar recorder in preheader
+            Instruction *pClonedIndvar = vecClonedInst[vecClonedInst.size() - 1];  // the last is the cloned indvar
+            switch (pClonedIndvar->getOpcode()) {
+                case Instruction::Load: {
+                    NCAddrType addrType;
+                    if (getNCAddrType(pClonedIndvar, 0, addrType)) {
+                        InlineHookLoopBegin(addrType.pAddr, addrType.pType, pClonedIndvar);
+                    }
+                    break;
                 }
-                break;
-            }
-            case Instruction::Store: {
+                case Instruction::Store: {
 //                NCAddrType addrType;
 //                if (getNCAddrType(pClonedIndvar, 1, addrType)) {
 //                    InlineHookStore(addrType.pAddr, addrType.pType, pClonedIndvar);
 //                }
-                break;
-            }
-            default: {
-                errs() << "Cloned Indvar not Load or Store\n";
-                break;
+                    break;
+                }
+                default: {
+                    errs() << "Cloned Indvar not Load or Store\n";
+                    break;
+                }
             }
         }
     }
@@ -1317,30 +1397,30 @@ void LoopInstrumentor::InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToIns
         }
 
         // Instrument cloned Indvar recorder in exit blocks
-        Instruction *pClonedIndvar = vecClonedInst[vecClonedInst.size() - 1];  // the last is the cloned indvar
-        switch (pClonedIndvar->getOpcode()) {
-            case Instruction::Load: {
-                NCAddrType addrType;
-                if (getNCAddrType(pClonedIndvar, 0, addrType)) {
-                    InlineHookLoopEnd(addrType.pAddr, addrType.pType, pClonedIndvar);
+        if (!vecClonedInst.empty()) {
+            Instruction *pClonedIndvar = vecClonedInst[vecClonedInst.size() - 1];  // the last is the cloned indvar
+            switch (pClonedIndvar->getOpcode()) {
+                case Instruction::Load: {
+                    NCAddrType addrType;
+                    if (getNCAddrType(pClonedIndvar, 0, addrType)) {
+                        InlineHookLoopEnd(addrType.pAddr, addrType.pType, pClonedIndvar);
+                    }
+                    break;
                 }
-                break;
-            }
-            case Instruction::Store: {
+                case Instruction::Store: {
 //                NCAddrType addrType;
 //                if (getNCAddrType(pClonedIndvar, 1, addrType)) {
 //                    InlineHookStore(addrType.pAddr, addrType.pType, pClonedIndvar);
 //                }
-                break;
-            }
-            default: {
-                errs() << "Cloned Indvar not Load or Store\n";
-                break;
+                    break;
+                }
+                default: {
+                    errs() << "Cloned Indvar not Load or Store\n";
+                    break;
+                }
             }
         }
     }
-
-
 }
 
 void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,
@@ -1444,7 +1524,7 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
         Function *duplicateFunction = CloneFunction(rawFunction, VCalleeMap, nullptr);
         duplicateFunction->setName(rawFunction->getName() + ".CPI");
         duplicateFunction->setLinkage(GlobalValue::InternalLinkage);
-        rawFunction->getParent()->getFunctionList().push_back(duplicateFunction);
+//        rawFunction->getParent()->getFunctionList().push_back(duplicateFunction);
 
         VCalleeMap[rawFunction] = duplicateFunction;
     }
@@ -1499,9 +1579,24 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
                 }
             }
 
-        } else if (isa<MemIntrinsic>(pInst)) {
+        } else if (isa<MemSetInst>(pInst)) {
+            continue;
+        } else if (MemTransferInst * pMem = dyn_cast<MemTransferInst>(pInst)) {
             errs() << "MemInstrinsic met\n";
             pInst->dump();
+            InlineHookMem(pMem, pInst);
+        } else if (isa<CallInst>(pInst)) {
+            if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
+                errs() << "IOFunction called\n";
+                Function *pFunc = pCallInst->getCalledFunction();
+                InlineHookIOFunc(pFunc, pInst);
+            }
+        } else if (isa<InvokeInst>(pInst)) {
+            if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
+                errs() << "IOFunction invoked\n";
+                Function *pFunc = pInvokeInst->getCalledFunction();
+                InlineHookIOFunc(pFunc, pInst);
+            }
         }
     }
 }
@@ -1623,4 +1718,29 @@ void LoopInstrumentor::ClonePreIndvar(Instruction *preIndvar, Instruction *Inser
     VMap[preIndvar] = pClonedInst;
     vecClonedInst.push_back(pClonedInst);
     pClonedInst->insertBefore(InsertBefore);
+}
+
+void LoopInstrumentor::InlineHookMem(MemTransferInst * pMem, Instruction *II) {
+    Value *pAddr = pMem->getRawSource();
+    Value *pValueLength = pMem->getLength();
+    InlineSetRecord(pAddr, pValueLength, this->ConstantInt2, II);
+}
+
+void LoopInstrumentor::InlineHookIOFunc(Function *F, Instruction *II) {
+    std::string funcName = F->getName();
+    std::vector<Value *> vecParams;
+
+    if (funcName == "fgetc") {
+        // Set addr == 0
+        // Use 1 as length
+        InlineSetRecord(ConstantLong0, ConstantInt1, ConstantInt2, II);
+
+    } else if (funcName == "fread") {
+        // TODO: Record Size * Count
+        // Set addr == 0
+        // length = size(operand[1]) * count(operand[2])
+        // But that's hard, so we still Use 1 as length
+        InlineSetRecord(ConstantLong0, ConstantInt1, ConstantInt2, II);
+    }
+
 }

@@ -1,5 +1,5 @@
-#ifndef NEWCOMAIR_LOOPSAMPLER_LOOPINSTRUMENTOR_LOOPINSTRUMENTOR_H
-#define NEWCOMAIR_LOOPSAMPLER_LOOPINSTRUMENTOR_LOOPINSTRUMENTOR_H
+#ifndef NEWCOMAIR_RECURSIVESAMPLER_RECURSIVEINSTRUMENTOR_H
+#define NEWCOMAIR_RECURSIVESAMPLER_RECURSIVEINSTRUMENTOR_H
 
 #include <vector>
 #include <set>
@@ -15,18 +15,11 @@
 
 using namespace llvm;
 
-struct IndvarNameStride {
-    const std::string indvarName;
-    const int stride;
-};
-
-typedef std::vector<IndvarNameStride> VecIndvarNameStrideTy;
-
-struct LoopInstrumentor : public ModulePass {
+struct RecursiveInstrumentor : public ModulePass {
 
     static char ID;
 
-    LoopInstrumentor();
+    RecursiveInstrumentor();
 
     virtual void getAnalysisUsage(AnalysisUsage &AU) const;
 
@@ -50,41 +43,38 @@ private:
     // Instrument
     void InstrumentMain();
 
-    void InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument);
+    void InstrumentRecursiveFunction(Function *pRecursiveFunc);
 
     // Helper
-    bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
+    // bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
 
-    bool SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, DominatorTree &DT,
-                                const VecIndvarNameStrideTy &vecIndvarNameStride,
-                                MapLocFlagToInstrument &mapToInstrument);
-
-    void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,
+    bool SearchToBeInstrumented(Function *pRecursiveFunc, std::vector<Instruction *> &vecToInstrument);
+//
+    void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInRecursiveFunc, ValueToValueMapTy &VCalleeMap,
                              std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
-    void CreateIfElseBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
+    void CreateIfElseBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded);
 
-    void CreateIfElseIfBlock(Loop *pInnerLoop, std::vector<BasicBlock *> &vecAdded);
+    void CreateIfElseIfBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded);
 
-    void CloneInnerLoop(Loop *pLoop, std::vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
-                        std::vector<BasicBlock *> &vecCloned);
-
-    void InsertBBBeforeExit(Loop *pLoop, DominatorTree &DT, ValueToValueMapTy &VMap,
-                            std::map<BasicBlock *, BasicBlock *> &mapExit2Inter);
+    void CloneRecursiveFunction();
 
     // copy operands and incoming values from old Inst to new Inst
     void RemapInstruction(Instruction *I, ValueToValueMapTy &VMap);
 
     // Instrument InlineHookLoad and InlineHookStore
-    void InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToInstrument, Instruction *pTermOfPreheader,
-                                  std::set<BasicBlock *> setInterBlock);
+    // void InstrumentRecordMemHooks(std::set<Instruction *> vecToInstrumentCloned);
 
     // Inline instrument
-    void InlineNumGlobalCost(Loop *pLoop);
+    void InstrumentRmsUpdater(Function *F);
+
+    void InlineNumGlobalCost(Function *pFunction);
 
     void InlineSetRecord(Value *address, Value *length, Value *flag, Instruction *InsertBefore);
 
     void InlineHookDelimit(Instruction *InsertBefore);
+
+    void InlineHookLoad(Value *addr, ConstantInt *const_length, Instruction *InsertBefore);
 
     void InlineHookStore(Value *addr, Type *type1, Instruction *InsertBefore);
 
@@ -92,16 +82,9 @@ private:
 
     void InlineOutputCost(Instruction *InsertBefore);
 
-    void InlineHookLoopBegin(Value *addr, Type *type1, Instruction *InsertBefore);
+    void InstrumentReturn(Function *Func);
 
-    void InlineHookLoopEnd(Value *addr, Type *type1, Instruction *InsertBefore);
-
-    void ClonePreIndvar(Instruction *preIndvar, Instruction *InsertBefore, ValueToValueMapTy &VMap,
-                        std::vector<Instruction *> &vecClonedInst);
-
-    void InlineHookMem(MemTransferInst * pMem, Instruction * II);
-
-    void InlineHookIOFunc(Function *p, Instruction *II);
+    void InstrumentNewReturn(Function *Func);
 
     // Module
     Module *pModule;
@@ -113,6 +96,7 @@ private:
     IntegerType *IntType;
     IntegerType *CharType;
     PointerType *CharStarType;
+    PointerType *VoidPointerType;
     StructType *struct_stMemRecord;
 
     // Global Variable
@@ -145,8 +129,14 @@ private:
     ConstantInt *ConstantInt4;  // loop begin
     ConstantInt *ConstantInt5;  // loop end
     ConstantInt *ConstantLong16;
+    ConstantInt *ConstantLong1;
+    ConstantInt *ConstantLongN1;
     ConstantPointerNull *ConstantNULL;
     Constant *SAMPLE_RATE_ptr;
+
+    Function *myNewF;
+
 };
 
-#endif //NEWCOMAIR_LOOPSAMPLER_LOOPINSTRUMENTOR_LOOPINSTRUMENTOR_H
+
+#endif //NEWCOMAIR_RECURSIVESAMPLER_RECURSIVEINSTRUMENTOR_H

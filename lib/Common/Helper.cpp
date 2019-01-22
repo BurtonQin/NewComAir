@@ -402,5 +402,5 @@ std::string getClonedFunctionName(Module *M, std::string FuncName) {
         }
     }
 
-    return NULL;
+    return "";
 }

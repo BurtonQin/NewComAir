@@ -51,7 +51,7 @@ int closeSharedMem(const char *sharedMemName, int fd, bool clearData) {
 }
 
 int openDebugLogFile(const char *logFileName, FILE *&pFile) {
-    pFile = fopen(logFileName, "w");
+    pFile = fopen(logFileName, "a");
     if (pFile == nullptr) {
         fprintf(stderr, "file open failed: %s\n", strerror(errno));
         return errno;
@@ -107,20 +107,20 @@ int main(int argc, char *argv[]) {
     if (err != 0) {
         return err;
     }
-#ifdef DEBUG
+//#ifdef DEBUG
     FILE *pFile;
     openDebugLogFile(sharedMemName, pFile);
-#endif
+//#endif
 
-#ifdef DEBUG
+//#ifdef DEBUG
     parseRecord(pcBuffer, vecStride, pFile);
-#else
-    parseRecord(pcBuffer, vecStride, nullptr);
-#endif
+//#else
+//    parseRecord(pcBuffer, vecStride, nullptr);
+//#endif
 
-#ifdef DEBUG
+//#ifdef DEBUG
     closeDebugLogFile(pFile);
-#endif
+//#endif
 
     closeSharedMem(sharedMemName, fd);
 }
