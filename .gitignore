@@ -4,18 +4,4 @@ cmake-build-debug/*
 
 temp-test/*
 
-stubs/apache34464/example/*
-
-stubs/apache34464/build/*
-
-stubs/apache34464/inputs/*
-
-stubs/apache34464/results.O0/*
-
-stubs/apache34464/results.O2/*
-
-stubs/apache34464/targets.O0/*
-
-stubs/apache34464/targets.O2/*
-
-stubs/apache34464/lib
+stubs/*
