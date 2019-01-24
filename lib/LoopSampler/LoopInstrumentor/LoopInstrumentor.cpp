@@ -493,8 +493,6 @@ static unsigned parseInst(Instruction *pInst, NCAddrType &addrType) {
         if (getNCAddrType(pInst, 1, addrType)) {
             return NCInstType::NCStore;
         }
-    } else if (isa<MemSetInst>(pInst)) {
-        return NCInstType::NCOthers;
     } else if (dyn_cast<MemTransferInst>(pInst)) {
         return NCInstType::NCMemIntrinsic;
     } else if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
@@ -530,7 +528,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     set<Instruction *> setNotMustAlias;
     map<NCAddrType, vector<Instruction *>> mapLoadInst;
     map<NCAddrType, vector<Instruction *>> mapStoreInst;
-    set<Instruction *> setMemInstrinsic;
+    set<Instruction *> setMemIntrinsic;
     set<Instruction *> setCallOrInvoke;
 
     // Traverse Loop to record IndVars (Load/Store), record only one for vars that are alias
@@ -562,7 +560,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                             case NCInstType::NCMemIntrinsic: {
                                 errs() << "MemIntrinsic met\n";
                                 pInst->dump();
-                                setMemInstrinsic.insert(pInst);
+                                setMemIntrinsic.insert(pInst);
                                 break;
                             }
                             case NCInstType::NCCallOrInvoke: {
@@ -608,7 +606,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                         case NCInstType::NCMemIntrinsic: {
                             errs() << "MemIntrinsic met\n";
                             pInst->dump();
-                            setMemInstrinsic.insert(pInst);
+                            setMemIntrinsic.insert(pInst);
                             break;
                         }
                         case NCInstType::NCCallOrInvoke: {
@@ -678,7 +676,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
         }
     }
 
-    for (auto &pInst: setMemInstrinsic) {
+    for (auto &pInst: setMemIntrinsic) {
         mapToInstrument[pInst] = NCInstrumentLocFlag::Inplace;
     }
 
@@ -709,10 +707,13 @@ LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLo
         setExitBlocks.insert(ExitBlocks[i]);
     }
 
-    ValueToValueMapTy VCalleeMap;
+//    ValueToValueMapTy VCalleeMap;
+    ValueToValueMapTy VMap;
+
     map<Function *, set<Instruction *> > FuncCallSiteMapping;
     // add hooks to function called inside the loop
-    CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
+//    CloneFunctionCalled(setBlocksInLoop, VCalleeMap, FuncCallSiteMapping);
+    CloneFunctionCalled(setBlocksInLoop, VMap, FuncCallSiteMapping);
 
     // created auxiliary basic block
     vector<BasicBlock *> vecAdd;
@@ -726,7 +727,7 @@ LoopInstrumentor::InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLo
     InlineNumGlobalCost(pInnerLoop);
 
     // clone loop
-    ValueToValueMapTy VMap;
+//    ValueToValueMapTy VMap = VCalleeMap;
     vector<BasicBlock *> vecCloned;
     CloneInnerLoop(pInnerLoop, vecAdd, VMap, vecCloned);
 
@@ -1233,6 +1234,8 @@ void LoopInstrumentor::InstrumentRecordMemHooks(MapLocFlagToInstrument &mapToIns
         NCInstrumentLocFlag flag = kv.second;
 
         if (MemTransferInst *pMem = dyn_cast<MemTransferInst>(pInst)) {
+            errs() << "mem intrinsic met\n";
+            pMem->dump();
             InlineHookMem(pMem, pInst);
         } else if (isa<CallInst>(pInst)) {
             if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
@@ -1498,20 +1501,23 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
                     continue;
                 }
 
-                assert(Node->getNumOperands() == 1);
-                if (auto *MDV = dyn_cast<ValueAsMetadata>(Node)) {
-                    Value *V = MDV->getValue();
-                    auto CI = dyn_cast<ConstantInt>(V);
-                    assert(CI);
-                    if (this->setInstID.find(CI->getZExtValue()) != this->setInstID.end()) {
-                        if (isa<LoadInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
-                            setMonitoredInstInCallee.insert(&*II);
-                        } else {
-                            assert(0);
-                        }
-                    }
-                }
+//                assert(Node->getNumOperands() == 1);
+//                if (auto *MDV = dyn_cast<ValueAsMetadata>(Node)) {
+//                    Value *V = MDV->getValue();
+//                    auto CI = dyn_cast<ConstantInt>(V);
+//                    assert(CI);
+//                    if (this->setInstID.find(CI->getZExtValue()) != this->setInstID.end()) {
+//                        if (isa<LoadInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
+//                            setMonitoredInstInCallee.insert(&*II);
+//                        } else {
+//                            assert(0);
+//                        }
+//                    }
+//                }
 
+                 if (isa<LoadInst>(II) || isa<StoreInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
+                         setMonitoredInstInCallee.insert(&*II);
+                 }
             }
         }
     }
@@ -1556,11 +1562,16 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
     auto itMonInstBegin = setMonitoredInstInCallee.begin();
     auto itMonInstEnd = setMonitoredInstInCallee.end();
 
+    errs() << "Size: " << setMonitoredInstInCallee.size() << '\n';
+
     for (; itMonInstBegin != itMonInstEnd; itMonInstBegin++) {
         ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
         assert(It != VCalleeMap.end());
 
         auto pInst = cast<Instruction>(It->second);
+
+        errs() << "In cloned function: " << *pInst << '\n';
+
         if (isa<LoadInst>(pInst)) {
             if (dyn_cast<LoadInst>(pInst)) {
                 unsigned oprandidx = 0;  // first operand
@@ -1579,22 +1590,22 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
                 }
             }
 
-        } else if (isa<MemSetInst>(pInst)) {
-            continue;
         } else if (MemTransferInst * pMem = dyn_cast<MemTransferInst>(pInst)) {
-            errs() << "MemInstrinsic met\n";
+            errs() << "MemIntrinsic met\n";
             pInst->dump();
             InlineHookMem(pMem, pInst);
         } else if (isa<CallInst>(pInst)) {
             if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
                 errs() << "IOFunction called\n";
                 Function *pFunc = pCallInst->getCalledFunction();
+                errs() << pCallInst->getType();
                 InlineHookIOFunc(pFunc, pInst);
             }
         } else if (isa<InvokeInst>(pInst)) {
             if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
                 errs() << "IOFunction invoked\n";
                 Function *pFunc = pInvokeInst->getCalledFunction();
+                errs() << pInvokeInst->getType();
                 InlineHookIOFunc(pFunc, pInst);
             }
         }
@@ -1721,9 +1732,37 @@ void LoopInstrumentor::ClonePreIndvar(Instruction *preIndvar, Instruction *Inser
 }
 
 void LoopInstrumentor::InlineHookMem(MemTransferInst * pMem, Instruction *II) {
-    Value *pAddr = pMem->getRawSource();
-    Value *pValueLength = pMem->getLength();
-    InlineSetRecord(pAddr, pValueLength, this->ConstantInt2, II);
+
+    if (MemSetInst *pMemSet = dyn_cast<MemSetInst>(pMem)) {
+        Value *pAddr = pMemSet->getDest();
+        CastInst *int64_address = new PtrToIntInst(pAddr, this->LongType, "", II);
+        Value *pLen = pMemSet->getLength();
+        CastInst* int32_len = new TruncInst(pLen, this->IntType, "memset_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt3, II);
+
+    } else if (MemCpyInst *pMemCpy = dyn_cast<MemCpyInst>(pMem)) {
+        Value *pReadAddr = pMemCpy->getSource();
+        CastInst *int64_address = new PtrToIntInst(pReadAddr, this->LongType, "", II);
+        Value *pLen = pMemCpy->getLength();
+        CastInst *int32_len = new TruncInst(pLen, this->IntType, "memcpy_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt2, II);
+
+        Value *pWriteAddr = pMemCpy->getDest();
+        CastInst *int64_address_write = new PtrToIntInst(pWriteAddr, this->LongType, "", II);
+        InlineSetRecord(int64_address_write, int32_len, this->ConstantInt3, II);
+
+    } else if (MemMoveInst *pMemMove = dyn_cast<MemMoveInst>(pMem)) {
+
+        Value *pReadAddr = pMemMove->getSource();
+        CastInst *int64_address = new PtrToIntInst(pReadAddr, this->LongType, "", II);
+        Value *pLen = pMemMove->getLength();
+        CastInst* int32_len = new TruncInst(pLen, this->IntType, "memmove_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt2, II);
+
+        Value *pWriteAddr = pMemMove->getDest();
+        CastInst *int64_address_write = new PtrToIntInst(pWriteAddr, this->LongType, "", II);
+        InlineSetRecord(int64_address_write, int32_len, this->ConstantInt3, II);
+    }
 }
 
 void LoopInstrumentor::InlineHookIOFunc(Function *F, Instruction *II) {
@@ -1732,15 +1771,19 @@ void LoopInstrumentor::InlineHookIOFunc(Function *F, Instruction *II) {
 
     if (funcName == "fgetc") {
         // Set addr == 0
-        // Use 1 as length
+        // length of return value is 1 (a char)
+        // flag is READ
         InlineSetRecord(ConstantLong0, ConstantInt1, ConstantInt2, II);
 
     } else if (funcName == "fread") {
-        // TODO: Record Size * Count
         // Set addr == 0
-        // length = size(operand[1]) * count(operand[2])
-        // But that's hard, so we still Use 1 as length
-        InlineSetRecord(ConstantLong0, ConstantInt1, ConstantInt2, II);
+        // length of return value
+        // flag is READ
+        // Note: 1. to get return value we must insert code AFTER the CallInst
+        // 2. Return type is 64 bit, must be cast to 32 bit first
+        Instruction *InsertBefore = II->getNextNode();
+        CastInst* length = new TruncInst(II, this->IntType, "conv", InsertBefore);
+        InlineSetRecord(ConstantLong0, length, ConstantInt2, InsertBefore);
     }
 
 }

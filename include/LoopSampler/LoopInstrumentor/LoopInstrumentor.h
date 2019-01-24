@@ -105,7 +105,7 @@ private:
 
     // Module
     Module *pModule;
-    std::set<std::uint64_t> setInstID;
+//    std::set<std::uint64_t> setInstID;
 
     // Type
     Type *VoidType;

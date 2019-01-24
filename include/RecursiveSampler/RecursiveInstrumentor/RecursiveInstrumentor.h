@@ -53,7 +53,7 @@ private:
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInRecursiveFunc, ValueToValueMapTy &VCalleeMap,
                              std::map<Function *, std::set<Instruction *> > &FuncCallSiteMapping);
 
-    void CreateIfElseBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded);
+    void CreateIfElseBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded, ValueToValueMapTy &VMap);
 
     void CreateIfElseIfBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded);
 
@@ -85,6 +85,10 @@ private:
     void InstrumentReturn(Function *Func);
 
     void InstrumentNewReturn(Function *Func);
+
+    void InlineHookMem(MemTransferInst * pMem, Instruction *II);
+
+    void InlineHookIOFunc(Function *F, Instruction *II);
 
     // Module
     Module *pModule;

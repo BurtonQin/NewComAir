@@ -20,7 +20,7 @@ int openSharedMem(const char *sharedMemName, int &fd, char *&pcBuffer) {
         return errno;
     }
     if (ftruncate(fd, BUFFERSIZE) == -1) {
-        fprintf(stderr, "fstruncate failed: %s\n", strerror(errno));
+        fprintf(stderr, "ftruncate failed: %s\n", strerror(errno));
         return errno;
     }
     pcBuffer = (char *) mmap(nullptr, BUFFERSIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -84,7 +84,7 @@ int readStrides(const char *indvarFileName, std::vector<int> &vecStride) {
 int main(int argc, char *argv[]) {
 
     static char g_LogFileName[] = "newcomair_123456789";
-    static char g_IndvarInfo[] = "/home/boqin/Projects/NewComAir/stubs/apache34464/build/indvar.info";
+    static char g_IndvarInfo[] = "./build/indvar.info";
 
     char *sharedMemName;
     char *indvarInfoPath;

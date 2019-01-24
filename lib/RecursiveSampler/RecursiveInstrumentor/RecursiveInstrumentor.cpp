@@ -432,10 +432,20 @@ bool RecursiveInstrumentor::runOnModule(Module &M) {
         return false;
     }
 
+    set<BasicBlock *> setBlocksInRecurFunc;
+    for (auto BB = pFunction->begin(); BB != pFunction->end(); BB++) {
+        setBlocksInRecurFunc.insert(&*BB);
+    }
+
+    ValueToValueMapTy VMap;
+
+    map<Function *, set<Instruction *> > FuncCallSiteMapping;
+    CloneFunctionCalled(setBlocksInRecurFunc, VMap, FuncCallSiteMapping);
+
     InstrumentMain();
 
     vector<BasicBlock *> vecAdd;
-    CreateIfElseBlock(pFunction, vecAdd);
+    CreateIfElseBlock(pFunction, vecAdd, VMap);
 
     // InstrumentRecursiveFunction(pFunction);
 
@@ -444,16 +454,15 @@ bool RecursiveInstrumentor::runOnModule(Module &M) {
     return false;
 }
 
-void
-RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInRecursiveFunc, ValueToValueMapTy &VCalleeMap,
+void RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,
                                            map<Function *, set<Instruction *> > &FuncCallSiteMapping) {
     vector<Function *> vecWorkList;
     set<Function *> toDo;
 
     set<Instruction *> setMonitoredInstInCallee;
 
-    auto itBlockSetBegin = setBlocksInRecursiveFunc.begin();
-    auto itBlockSetEnd = setBlocksInRecursiveFunc.end();
+    auto itBlockSetBegin = setBlocksInLoop.begin();
+    auto itBlockSetEnd = setBlocksInLoop.end();
 
     for (; itBlockSetBegin != itBlockSetEnd; itBlockSetBegin++) {
         BasicBlock *BB = *itBlockSetBegin;
@@ -474,11 +483,6 @@ RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInRecursi
                 }
 
                 if (pCalled->isDeclaration()) {
-                    continue;
-                }
-
-                // Avoid clone recursive function itself
-                if (pCalled->getName().str() == strFuncName) {
                     continue;
                 }
 
@@ -525,20 +529,23 @@ RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInRecursi
                     continue;
                 }
 
-                assert(Node->getNumOperands() == 1);
-                if (auto *MDV = dyn_cast<ValueAsMetadata>(Node)) {
-                    Value *V = MDV->getValue();
-                    auto CI = dyn_cast<ConstantInt>(V);
-                    assert(CI);
-                    if (this->setInstID.find(CI->getZExtValue()) != this->setInstID.end()) {
-                        if (isa<LoadInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
-                            setMonitoredInstInCallee.insert(&*II);
-                        } else {
-                            assert(0);
-                        }
-                    }
-                }
+//                assert(Node->getNumOperands() == 1);
+//                if (auto *MDV = dyn_cast<ValueAsMetadata>(Node)) {
+//                    Value *V = MDV->getValue();
+//                    auto CI = dyn_cast<ConstantInt>(V);
+//                    assert(CI);
+//                    if (this->setInstID.find(CI->getZExtValue()) != this->setInstID.end()) {
+//                        if (isa<LoadInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
+//                            setMonitoredInstInCallee.insert(&*II);
+//                        } else {
+//                            assert(0);
+//                        }
+//                    }
+//                }
 
+                if (isa<LoadInst>(II) || isa<StoreInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
+                    setMonitoredInstInCallee.insert(&*II);
+                }
             }
         }
     }
@@ -583,11 +590,16 @@ RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInRecursi
     auto itMonInstBegin = setMonitoredInstInCallee.begin();
     auto itMonInstEnd = setMonitoredInstInCallee.end();
 
+    errs() << "Size: " << setMonitoredInstInCallee.size() << '\n';
+
     for (; itMonInstBegin != itMonInstEnd; itMonInstBegin++) {
         ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
         assert(It != VCalleeMap.end());
 
         auto pInst = cast<Instruction>(It->second);
+
+//        errs() << "In cloned function: " << *pInst << '\n';
+
         if (isa<LoadInst>(pInst)) {
             if (dyn_cast<LoadInst>(pInst)) {
                 unsigned oprandidx = 0;  // first operand
@@ -606,14 +618,86 @@ RecursiveInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInRecursi
                 }
             }
 
-        } else if (isa<MemIntrinsic>(pInst)) {
-            errs() << "MemInstrinsic met\n";
-            pInst->dump();
+        } else if (MemTransferInst * pMem = dyn_cast<MemTransferInst>(pInst)) {
+//            errs() << "MemIntrinsic met\n";
+//            pInst->dump();
+            InlineHookMem(pMem, pInst);
+        } else if (isa<CallInst>(pInst)) {
+//            if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
+////                errs() << "IOFunction called\n";
+//                Function *pFunc = pCallInst->getCalledFunction();
+////                errs() << pCallInst->getType();
+//                InlineHookIOFunc(pFunc, pInst);
+//            }
+        } else if (isa<InvokeInst>(pInst)) {
+//            if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
+////                errs() << "IOFunction invoked\n";
+//                Function *pFunc = pInvokeInst->getCalledFunction();
+////                errs() << pInvokeInst->getType();
+//                InlineHookIOFunc(pFunc, pInst);
+//            }
         }
     }
 }
 
-void RecursiveInstrumentor::CreateIfElseBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded) {
+void RecursiveInstrumentor::InlineHookMem(MemTransferInst * pMem, Instruction *II) {
+
+    if (MemSetInst *pMemSet = dyn_cast<MemSetInst>(pMem)) {
+        Value *pAddr = pMemSet->getDest();
+        CastInst *int64_address = new PtrToIntInst(pAddr, this->LongType, "", II);
+        Value *pLen = pMemSet->getLength();
+        CastInst* int32_len = new TruncInst(pLen, this->IntType, "memset_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt3, II);
+
+    } else if (MemCpyInst *pMemCpy = dyn_cast<MemCpyInst>(pMem)) {
+        Value *pReadAddr = pMemCpy->getSource();
+        CastInst *int64_address = new PtrToIntInst(pReadAddr, this->LongType, "", II);
+        Value *pLen = pMemCpy->getLength();
+        CastInst *int32_len = new TruncInst(pLen, this->IntType, "memcpy_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt2, II);
+
+        Value *pWriteAddr = pMemCpy->getDest();
+        CastInst *int64_address_write = new PtrToIntInst(pWriteAddr, this->LongType, "", II);
+        InlineSetRecord(int64_address_write, int32_len, this->ConstantInt3, II);
+
+    } else if (MemMoveInst *pMemMove = dyn_cast<MemMoveInst>(pMem)) {
+
+        Value *pReadAddr = pMemMove->getSource();
+        CastInst *int64_address = new PtrToIntInst(pReadAddr, this->LongType, "", II);
+        Value *pLen = pMemMove->getLength();
+        CastInst* int32_len = new TruncInst(pLen, this->IntType, "memmove_len_conv", II);
+        InlineSetRecord(int64_address, int32_len, this->ConstantInt2, II);
+
+        Value *pWriteAddr = pMemMove->getDest();
+        CastInst *int64_address_write = new PtrToIntInst(pWriteAddr, this->LongType, "", II);
+        InlineSetRecord(int64_address_write, int32_len, this->ConstantInt3, II);
+    }
+}
+
+void RecursiveInstrumentor::InlineHookIOFunc(Function *F, Instruction *II) {
+    std::string funcName = F->getName();
+    std::vector<Value *> vecParams;
+
+    if (funcName == "fgetc") {
+        // Set addr == 0
+        // length of return value is 1 (a char)
+        // flag is READ
+        InlineSetRecord(ConstantLong0, ConstantInt1, ConstantInt2, II);
+
+    } else if (funcName == "fread") {
+        // Set addr == 0
+        // length of return value
+        // flag is READ
+        // Note: 1. to get return value we must insert code AFTER the CallInst
+        // 2. Return type is 64 bit, must be cast to 32 bit first
+        Instruction *InsertBefore = II->getNextNode();
+        CastInst* length = new TruncInst(II, this->IntType, "conv", InsertBefore);
+        InlineSetRecord(ConstantLong0, length, ConstantInt2, InsertBefore);
+    }
+
+}
+
+void RecursiveInstrumentor::CreateIfElseBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded, ValueToValueMapTy &VMap) {
 
     ValueToValueMapTy newVMap;
     ValueToValueMapTy rawVMap;
@@ -707,6 +791,13 @@ void RecursiveInstrumentor::CreateIfElseBlock(Function *pRecursiveFunc, std::vec
         ReturnInst::Create(this->pModule->getContext(), label_if_else);
     else
         ReturnInst::Create(this->pModule->getContext(), oneCall, label_if_else);
+
+    //remap value used inside new functions
+    for (auto &BB : *newF) {
+        for (auto &II : BB) {
+            this->RemapInstruction(&II, VMap);
+        }
+    }
 }
 
 void RecursiveInstrumentor::CreateIfElseIfBlock(Function *pRecursiveFunc, std::vector<BasicBlock *> &vecAdded) {
@@ -1135,6 +1226,8 @@ void RecursiveInstrumentor::CloneRecursiveFunction() {
         errs() << "could not find cloned recursive function." << "\n";
         exit(0);
     }
+
+
 
     InlineNumGlobalCost(Func);
     InstrumentRmsUpdater(NewFunc);
