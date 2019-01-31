@@ -34,6 +34,10 @@ static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &
             continue;
         }
 
+        if (stride < 0) {
+            stride = -stride;
+        }
+
         auto beginLength = indvarInfo.beginRecord.length;
         auto endLength = indvarInfo.endRecord.length;
 
@@ -48,6 +52,12 @@ static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &
 
         auto beginAddr = indvarInfo.beginRecord.address;
         auto endAddr = indvarInfo.endRecord.address;
+
+        if (beginAddr > endAddr) {
+            auto tmp = beginAddr;
+            beginAddr = endAddr;
+            endAddr = tmp;
+        }
 
         unsigned byteCounter = 0;
 

@@ -115,6 +115,7 @@ bool LoopInstrumentor::runOnModule(Module &M) {
 
     if (!mapToInstrumentSpecial.empty()) {
         InstrumentInnerLoop(pLoop, DT, mapToInstrumentSpecial);
+
     } else {
         InstrumentInnerLoop(pLoop, DT, mapToInstrument);
     }
@@ -499,7 +500,8 @@ static unsigned parseInst(Instruction *pInst, NCAddrType &addrType) {
         Function *pFunc = pCallInst->getCalledFunction();
         if (pFunc) {
             if (pFunc->getName().str() == "fgetc" ||
-            pFunc->getName().str() == "fread") {
+                pFunc->getName().str() == "fread") {
+//            pFunc->getName().str() == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv") {
                 return NCInstType::NCCallOrInvoke;
             }
         }
@@ -508,6 +510,7 @@ static unsigned parseInst(Instruction *pInst, NCAddrType &addrType) {
         if (pFunc) {
             if (pFunc->getName().str() == "fgetc" ||
                 pFunc->getName().str() == "fread") {
+//            pFunc->getName().str() == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv") {
                 return NCInstType::NCCallOrInvoke;
             }
         }
@@ -534,7 +537,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     // Traverse Loop to record IndVars (Load/Store), record only one for vars that are alias
     // Note that we must handle all indvars before handling other Vars to guarantee indvars in setNotMustAlias
 
-    errs() << "enter SearchToBeInstrumented\n";
+//    errs() << "enter SearchToBeInstrumented\n";
     if (!vecIndvarNameStride.empty()) {
         for (auto BI = pLoop->block_begin(); BI != pLoop->block_end(); BI++) {
             BasicBlock *BB = *BI;
@@ -578,8 +581,8 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
             }
         }
     }
-
-    errs() << "enter Loop to record other Vars\n";
+//
+//    errs() << "enter Loop to record other Vars\n";
     // Traverse Loop to record other Vars (Load/Store), record only one for vars that are alias
     for (auto BI = pLoop->block_begin(); BI != pLoop->block_end(); BI++) {
         BasicBlock *BB = *BI;
@@ -623,7 +626,7 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
         }
     }
 
-    errs() << "enter use dominance to decide\n";
+//    errs() << "enter use dominance to decide\n";
     // Use dominance to decide instrument locations
     for (auto &kv : mapLoadInst) {
 
@@ -644,7 +647,9 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
                     mapToInstrument[vecLoadInst[0]] = NCInstrumentLocFlag::Hoist;
                 } else if (isIndvar(addrType.pAddr, vecIndvarNameStride)) {
                     // TODO: hoist BB [firstInst, pLoad] to preheader; hoist only relevant insts to preheader in the future
-                    mapToInstrument[vecLoadInst[0]] = NCInstrumentLocFlag::HoistSink;
+                    // TODO: DEBUG ONLY
+                     mapToInstrument[vecLoadInst[0]] = NCInstrumentLocFlag::HoistSink;
+//                    mapToInstrument[vecLoadInst[0]] = NCInstrumentLocFlag::Hoist;
                 } else {
                     mapToInstrument[vecLoadInst[0]] = NCInstrumentLocFlag::Inplace;
                 }
@@ -685,9 +690,22 @@ bool LoopInstrumentor::SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, Do
     }
 
     // TODO: For Debug
-    for (auto &kv: mapToInstrument) {
-        kv.second = NCInstrumentLocFlag::Inplace;
-    }
+//    for (auto &kv: mapToInstrument) {
+//        if (MDNode *node = kv.first->getMetadata("ins_id")) {
+//            kv.first->dump();
+//            Constant* val = dyn_cast<ConstantAsMetadata>(node->getOperand(0))->getValue();
+//            auto ins_id_num = cast<ConstantInt>(val)->getSExtValue();
+////            if (ins_id_num == 690) {
+////                errs() << "Erase 690\n";
+////                mapToInstrument.erase(kv.first);
+////                break;
+////            }
+//        }
+//    }
+
+//    for (auto &kv: mapToInstrument) {
+//        kv.second = NCInstrumentLocFlag::Inplace;
+//    }
 
     return true;
 }
@@ -1515,9 +1533,40 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
 //                    }
 //                }
 
-                 if (isa<LoadInst>(II) || isa<StoreInst>(II) || isa<CallInst>(II) || isa<InvokeInst>(II) || isa<MemTransferInst>(II)) {
-                         setMonitoredInstInCallee.insert(&*II);
-                 }
+                assert(Node->getNumOperands() == 1);
+
+                if (auto *MDV = dyn_cast<ValueAsMetadata>(Node)) {
+                    Value *V = MDV->getValue();
+                    auto CI = dyn_cast<ConstantInt>(V);
+                    assert(CI);
+
+                    if (isa<LoadInst>(II) || isa<StoreInst>(II)) {
+                        setMonitoredInstInCallee.insert(&*II);
+                    } else if (isa<MemTransferInst>(II)) {
+                        setMonitoredInstInCallee.insert(&*II);
+                    } else if (isa<CallInst>(II)) {
+                        if (CallInst* pCall = dyn_cast<CallInst>(II)) {
+                            if (Function *pFunc = pCall->getCalledFunction()) {
+                                if (pFunc->getName().str() == "fgetc" ||
+                                    pFunc->getName().str() == "fread") { // ||
+//                                    pFunc->getName().str() == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv") {
+                                    setMonitoredInstInCallee.insert(&*II);
+                                }
+                            }
+                        }
+
+                    } else if (isa<InvokeInst>(II)) {
+                        if (InvokeInst* pInvoke = dyn_cast<InvokeInst>(II)) {
+                            if (Function *pFunc = pInvoke->getCalledFunction()) {
+                                if (pFunc->getName().str() == "fgetc" ||
+                                    pFunc->getName().str() == "fread") {// ||
+//                                    pFunc->getName().str() == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv") {
+                                    setMonitoredInstInCallee.insert(&*II);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1562,7 +1611,7 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
     auto itMonInstBegin = setMonitoredInstInCallee.begin();
     auto itMonInstEnd = setMonitoredInstInCallee.end();
 
-    errs() << "Size: " << setMonitoredInstInCallee.size() << '\n';
+//    errs() << "Size: " << setMonitoredInstInCallee.size() << '\n';
 
     for (; itMonInstBegin != itMonInstEnd; itMonInstBegin++) {
         ValueToValueMapTy::iterator It = VCalleeMap.find(*itMonInstBegin);
@@ -1570,7 +1619,7 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
 
         auto pInst = cast<Instruction>(It->second);
 
-        errs() << "In cloned function: " << *pInst << '\n';
+//        errs() << "In cloned function: " << *pInst << '\n';
 
         if (isa<LoadInst>(pInst)) {
             if (dyn_cast<LoadInst>(pInst)) {
@@ -1591,21 +1640,21 @@ void LoopInstrumentor::CloneFunctionCalled(set<BasicBlock *> &setBlocksInLoop, V
             }
 
         } else if (MemTransferInst * pMem = dyn_cast<MemTransferInst>(pInst)) {
-            errs() << "MemIntrinsic met\n";
-            pInst->dump();
+//            errs() << "MemIntrinsic met\n";
+//            pInst->dump();
             InlineHookMem(pMem, pInst);
         } else if (isa<CallInst>(pInst)) {
             if (CallInst *pCallInst = dyn_cast<CallInst>(pInst)) {
-                errs() << "IOFunction called\n";
+//                errs() << "IOFunction called\n";
                 Function *pFunc = pCallInst->getCalledFunction();
-                errs() << pCallInst->getType();
+//                errs() << pCallInst->getType();
                 InlineHookIOFunc(pFunc, pInst);
             }
         } else if (isa<InvokeInst>(pInst)) {
             if (InvokeInst *pInvokeInst = dyn_cast<InvokeInst>(pInst)) {
-                errs() << "IOFunction invoked\n";
+//                errs() << "IOFunction invoked\n";
                 Function *pFunc = pInvokeInst->getCalledFunction();
-                errs() << pInvokeInst->getType();
+//                errs() << pInvokeInst->getType();
                 InlineHookIOFunc(pFunc, pInst);
             }
         }
@@ -1782,8 +1831,20 @@ void LoopInstrumentor::InlineHookIOFunc(Function *F, Instruction *II) {
         // Note: 1. to get return value we must insert code AFTER the CallInst
         // 2. Return type is 64 bit, must be cast to 32 bit first
         Instruction *InsertBefore = II->getNextNode();
-        CastInst* length = new TruncInst(II, this->IntType, "conv", InsertBefore);
+        CastInst *length = new TruncInst(II, this->IntType, "conv", InsertBefore);
         InlineSetRecord(ConstantLong0, length, ConstantInt2, InsertBefore);
     }
+
+//        // STL map get pair
+//    } else if (funcName == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv" ||
+//            funcName == "_ZNKSt17_Rb_tree_iteratorISt4pairIKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES6_EEptEv.CPI") {
+//        // Set addr == 0
+//        // length of return value is set to 1 (TODO: use the pointee length)
+//        // flag is READ
+//        errs() << "STL Function Met!\n";
+//        Instruction *InsertBefore = II->getNextNode();
+//        CastInst *int64_address = new PtrToIntInst(II, this->LongType, "", II);
+//        InlineSetRecord(int64_address, ConstantInt1, ConstantInt2, InsertBefore);
+//    }
 
 }
