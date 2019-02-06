@@ -19,11 +19,11 @@ TARGET=target.clonesample
 ORIGIN_TARGET=target
 
 # bug specific (mutable)
-BUG_DIR=${PROJECT_DIR}stubs/apache34464/
-SRC_FILE=${BUG_DIR}Telnet.c
+BUG_DIR=${PROJECT_DIR}stubs/apache37184/
+SRC_FILE=${BUG_DIR}apache37184.c
 #BC_FILE=${BUG_DIR}target.bc
-LINENO=103
-FUNCNAME=indexOf
+LINENO=65
+FUNCNAME=fireMessageLoggedEvent
 # Sample once or twice consecutively
 BELSEIF=
 #BELSEIF=-bElseIf

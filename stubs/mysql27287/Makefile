@@ -76,14 +76,14 @@ ${TARGET}${BELSEIF}.lalls.bc: ${TARGET}.bc.id ${LOOP_INSTRUMENT_PASS} ${SRC_FILE
 	 -noLine ${LINENO} -strFile ${SRC_FILE} \
 	 -strFunc ${FUNCNAME} ${BELSEIF} $< > $@
 
-${TARGET}.bc.id: ${TARGET}.ls.bc ${ID_PASS}
-	opt -load ${ID_PASS} -tag-id $< > $@
-
 ${INDVAR_INFO}: ${TARGET}.m2r.bc ${INDVAR_FIND_PASS}
 	opt -load ${INDVAR_FIND_PASS} -indvar-find -noLine ${LINENO} -strFile ${SRC_FILE} -strFunc ${FUNCNAME} $< > /dev/null
 
-${TARGET}.m2r.bc: ${TARGET}.ls.bc
+${TARGET}.m2r.bc: ${TARGET}.bc.id
 	opt -mem2reg $< > $@
+
+${TARGET}.bc.id: ${TARGET}.ls.bc ${ID_PASS}
+	opt -load ${ID_PASS} -tag-id $< > $@
 
 ${TARGET}.ls.bc: ${BC_FILE}
 	opt -loop-simplify $< > $@

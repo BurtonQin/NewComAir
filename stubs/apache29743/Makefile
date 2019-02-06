@@ -1,5 +1,5 @@
 # compile
-CXX=clang
+CXX=clang++
 OP_CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
 CFLAGS=-O0 -Xclang -disable-O0-optnone -g -flto
 LDFLAGS=-use-gold-plugin -Wl,-plugin-opt=save-temps
@@ -19,11 +19,11 @@ TARGET=target.clonesample
 ORIGIN_TARGET=target
 
 # bug specific (mutable)
-BUG_DIR=${PROJECT_DIR}stubs/apache34464/
-SRC_FILE=${BUG_DIR}Telnet.c
+BUG_DIR=${PROJECT_DIR}stubs/apache29743/
+SRC_FILE=${BUG_DIR}apache29743.cpp
 #BC_FILE=${BUG_DIR}target.bc
-LINENO=103
-FUNCNAME=indexOf
+LINENO=37
+FUNCNAME=_ZN10Properties5storeERSt14basic_ofstreamIcSt11char_traitsIcEE
 # Sample once or twice consecutively
 BELSEIF=
 #BELSEIF=-bElseIf

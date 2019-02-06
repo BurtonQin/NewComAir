@@ -46,7 +46,7 @@ private:
     void InstrumentRecursiveFunction(Function *pRecursiveFunc);
 
     // Helper
-    // bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
+    // bool ReadIndvarStride(const char *filePath, VecIndvarInstIDStrideTy &vecIndvarNameStride);
 
     bool SearchToBeInstrumented(Function *pRecursiveFunc, std::vector<Instruction *> &vecToInstrument);
 //

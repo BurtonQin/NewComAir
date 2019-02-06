@@ -15,12 +15,12 @@
 
 using namespace llvm;
 
-struct IndvarNameStride {
-    const std::string indvarName;
-    const int stride;
+struct IndvarInstIDStride {
+    unsigned indvarInstID;
+    int stride;
 };
 
-typedef std::vector<IndvarNameStride> VecIndvarNameStrideTy;
+typedef std::vector<IndvarInstIDStride> VecIndvarInstIDStrideTy;
 
 struct LoopInstrumentor : public ModulePass {
 
@@ -53,10 +53,10 @@ private:
     void InstrumentInnerLoop(Loop *pInnerLoop, DominatorTree &DT, MapLocFlagToInstrument &mapToInstrument);
 
     // Helper
-    bool ReadIndvarStride(const char *filePath, VecIndvarNameStrideTy &vecIndvarNameStride);
+    bool ReadIndvarStride(const char *filePath, VecIndvarInstIDStrideTy &vecIndvarInstIDStride);
 
     bool SearchToBeInstrumented(Loop *pLoop, AliasAnalysis &AA, DominatorTree &DT,
-                                const VecIndvarNameStrideTy &vecIndvarNameStride,
+                                const VecIndvarInstIDStrideTy &vecIndvarInstIDStride,
                                 MapLocFlagToInstrument &mapToInstrument);
 
     void CloneFunctionCalled(std::set<BasicBlock *> &setBlocksInLoop, ValueToValueMapTy &VCalleeMap,

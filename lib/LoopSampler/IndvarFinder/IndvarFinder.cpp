@@ -3,6 +3,7 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Support/FileSystem.h>
 #include "Common/ArrayLinkedIndentifier.h"
+#include "Common/Helper.h"
 
 using namespace llvm;
 using std::map;
@@ -63,30 +64,14 @@ bool IndvarFinder::runOnModule(Module &M) {
         }
         const Instruction *pInst = is.pInst;
 
-        unsigned operandIdx = 0;
-        if (pInst->getOpcode() == Instruction::Store) {
-            operandIdx = 1;
-        } else if (pInst->getOpcode() != Instruction::Load) {
-            errs() << "Indvar not Load or Store\n";
+        int indvarInstID = GetInstructionID(const_cast<Instruction *>(pInst));
+        if (indvarInstID == -1) {
             continue;
         }
-
-        auto operand = pInst->getOperand(operandIdx);
-        if (!operand) {
-            errs() << "Indvar has no operand\n";
-            continue;
-        }
-
-        auto indvarName = operand->getName();
-        if (indvarName.empty()) {
-            errs() << "Indvar has no name\n";
-            continue;
-        }
-
-        errs() << indvarName << '\t';
+        errs() << indvarInstID << '\t';
         errs() << *stride << '\n';
 
-        myfile << indvarName << '\t';
+        myfile << indvarInstID << '\t';
         myfile << *stride << '\n';
     }
 
