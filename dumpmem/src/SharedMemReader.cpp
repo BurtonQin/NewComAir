@@ -100,13 +100,13 @@ int main(int argc, char *argv[]) {
     char *pcBuffer = nullptr;
     auto err = openSharedMem(sharedMemName, fd, pcBuffer);
     if (err != 0) {
-        return err;
+//        return err;
     }
     std::vector<int> vecStride;
-    err = readStrides(indvarInfoPath, vecStride);
-    if (err != 0) {
-        return err;
-    }
+//    err = readStrides(indvarInfoPath, vecStride);
+//    if (err != 0) {
+//        return err;
+//    }
 //#ifdef DEBUG
     FILE *pFile;
     openDebugLogFile(sharedMemName, pFile);

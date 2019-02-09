@@ -10,7 +10,7 @@ LIB_DIR=${PROJECT_DIR}cmake-build-debug/
 BIN_DIR=${PROJECT_DIR}bin/
 INDVAR_FIND_PASS=${LIB_DIR}lib/LoopSampler/IndvarFinder/libIndvarFindPass.so
 ID_PASS=${LIB_DIR}lib/IDAssigner/libIDAssignerPass.so
-LOOP_INSTRUMENT_PASS=${LIB_DIR}lib/LoopSampler/LoopInstrumentor/libLoopInstrumentPass.so
+LOOP_INSTRUMENT_PASS=${LIB_DIR}lib/LoopSampler/NewLoopInstrumentor/libNewLoopInstrumentPass.so
 RUNTIME_LIB=${LIB_DIR}runtime/libRuntimeLib.a
 # bug fixed parts
 INDVAR_INFO=indvar.info

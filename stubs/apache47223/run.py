@@ -28,6 +28,7 @@ PROJECT_DIR = os.path.dirname(os.path.realpath(__file__))
 BELSEIF = ""
 #BELSEIF = "-bElseIf"
 target = "./targets/target.clonesample" + BELSEIF
+dumpmem = "../../cmake-build-debug/dumpmem/dumpmem"
 counter = 0
 
 # generate input files in inputs/
@@ -102,7 +103,7 @@ def get_exectimes():
 def dump_mem():
 
     global counter
-    subprocess.run('dumpmem newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
+    subprocess.run(dumpmem + ' newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
     counter += 1
 
 # collect logs

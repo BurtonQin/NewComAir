@@ -136,7 +136,11 @@ void IDTagger::tagLoops(Module &M) {
 }
 
 bool IDTagger::runOnModule(Module &M) {
-    NumFunctions++;
+    // All IDs start from 1
+    ++NumFunctions;
+    ++NumBasciBlocks;
+    ++NumInstructions;
+    ++NumLoops;
 
     IntegerType *IntType = IntegerType::get(M.getContext(), 32);
     MDBuilder MDHelper(M.getContext());

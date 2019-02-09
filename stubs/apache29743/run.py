@@ -29,6 +29,7 @@ BELSEIF = ""
 #BELSEIF = "-bElseIf"
 target = "./targets/target.clonesample" + BELSEIF
 counter = 0
+dumpmem = "../../cmake-build-debug/dumpmem/dumpmem"
 
 CONST_STR = "/scratch.1/songlh/github/perf-benchmark/perf-benchmarks/apache29743/{0}.txt\n"
 
@@ -111,7 +112,7 @@ def get_exectimes():
 def dump_mem():
 
     global counter
-    subprocess.run('dumpmem newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
+    subprocess.run(dumpmem + ' newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
     subprocess.run('rm cache.result', shell=True)
     counter += 1
 

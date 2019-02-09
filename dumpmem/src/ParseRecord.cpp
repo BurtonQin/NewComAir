@@ -143,10 +143,24 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
     for (unsigned long i = 0; !endFlag; i += 16UL) {
         memcpy(&record, &pcBuffer[i], sizeof(record));
         if (pFile) {
-            fprintf(pFile, "%lu, %u, %u\n", record.address, record.length, record.flag);
+            fprintf(pFile, "%lu, %u, %d\n", record.address, record.length, record.id);
         }
 
-        switch (record.flag) {
+        RecordFlag flag;
+        if (record.id == 0) {
+            flag = RecordFlag::Terminator;
+        }
+        if (record.id == 2147483647) {
+            flag = RecordFlag::Delimiter;
+        }
+        if (record.id > 0) {
+            flag = RecordFlag::LoadFlag;
+        }
+        if (record.id < 0) {
+            flag = RecordFlag::StoreFlag;
+        }
+
+        switch (flag) {
             case RecordFlag::Terminator: {
                 endFlag = true;
                 if (i > 0) {  // skip the first loop (loop begins with delimiter)
@@ -202,35 +216,35 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
                 }
                 break;
             }
-            case RecordFlag::LoopBeginFlag: {
-                dqIndvarBeginRecord.push_back(record);
-                break;
-            }
-            case RecordFlag::LoopEndFlag: {
-
-                // get stride
-                auto stride = dqStride.front();
-                dqStride.pop_front();
-                if (stride == 0) {
-                    fprintf(stderr, "Stride == 0\n");
-                    continue;
-                }
-
-                // get indvar begin
-                auto indvarBeginRecord = dqIndvarBeginRecord.front();
-                dqIndvarBeginRecord.pop_front();
-
-                // check indvar begin and end length
-                auto &indvarEndRecord = record;
-                if (indvarBeginRecord.length != indvarEndRecord.length) {
-                    fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
-                    continue;
-                }
-
-                IndvarInfo indvarInfo{indvarBeginRecord, record, stride};
-                vecIndvarInfo.push_back(indvarInfo);
-                break;
-            }
+//            case RecordFlag::LoopBeginFlag: {
+//                dqIndvarBeginRecord.push_back(record);
+//                break;
+//            }
+//            case RecordFlag::LoopEndFlag: {
+//
+//                // get stride
+//                auto stride = dqStride.front();
+//                dqStride.pop_front();
+//                if (stride == 0) {
+//                    fprintf(stderr, "Stride == 0\n");
+//                    continue;
+//                }
+//
+//                // get indvar begin
+//                auto indvarBeginRecord = dqIndvarBeginRecord.front();
+//                dqIndvarBeginRecord.pop_front();
+//
+//                // check indvar begin and end length
+//                auto &indvarEndRecord = record;
+//                if (indvarBeginRecord.length != indvarEndRecord.length) {
+//                    fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
+//                    continue;
+//                }
+//
+//                IndvarInfo indvarInfo{indvarBeginRecord, record, stride};
+//                vecIndvarInfo.push_back(indvarInfo);
+//                break;
+//            }
             default: {
                 break;
             }

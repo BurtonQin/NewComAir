@@ -29,6 +29,8 @@ BELSEIF = ""
 #BELSEIF = "-bElseIf"
 target = "./targets/target.clonesample" + BELSEIF
 counter = 0
+#dumpmem = "../../cmake-build-debug/newdumpmem/newdumpmem"
+dumpmem = "dumpmem"
 
 CONSTANT_SONG = 'song'
 
@@ -108,8 +110,8 @@ def get_exectimes():
 # dump mem to logs
 def dump_mem():
 
-    global counter
-    subprocess.run('dumpmem newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
+    global counter 
+    subprocess.run(dumpmem + ' newcomair_123456789 ./results/indvar.info > comair_logger_%d' % counter, shell=True)
     counter += 1
 
 # collect logs

@@ -6,7 +6,7 @@
 
 enum RecordFlag : unsigned {
     Terminator = 0,
-    Delimiter,
+    Delimiter = 2147483647,
     LoadFlag,
     StoreFlag,
     LoopBeginFlag,
@@ -22,7 +22,8 @@ enum OneLoopRecordFlag : unsigned {
 struct struct_stMemRecord {
     unsigned long address;
     unsigned length;
-    RecordFlag flag;
+//    RecordFlag flag;
+    int id;
 };
 
 typedef std::map<unsigned long, OneLoopRecordFlag> OneLoopRecordTy;
