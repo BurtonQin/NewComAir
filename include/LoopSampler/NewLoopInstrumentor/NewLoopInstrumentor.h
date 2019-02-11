@@ -88,6 +88,10 @@ private:
     // Inline instrument
     void InlineNumGlobalCost(Loop *pLoop);
 
+    void InlineGlobalCostForLoop(std::set<BasicBlock* > & setBBInLoop);
+
+    void InlineGlobalCostForCallee(Function * pFunction);
+
     void InlineSetRecord(Value *address, Value *length, Value *id, Instruction *InsertBefore);
 
     void InlineHookDelimit(Instruction *InsertBefore);

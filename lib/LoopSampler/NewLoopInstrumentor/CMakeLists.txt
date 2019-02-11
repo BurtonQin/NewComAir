@@ -1,6 +1,8 @@
 add_library(NewLoopInstrumentPass MODULE
         # List your source files here.
-        NewLoopInstrumentor.cpp)
+        NewLoopInstrumentor.cpp
+        BBProfiling.cpp
+       )
 
 target_link_libraries(NewLoopInstrumentPass CommonLib)
 
