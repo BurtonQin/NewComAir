@@ -153,6 +153,7 @@ private:
 
     // Constant
     ConstantInt *ConstantLong0;
+    ConstantInt *ConstantLong1;
     ConstantInt *ConstantInt0;
     ConstantInt *ConstantIntN1;
     ConstantInt *ConstantInt1;

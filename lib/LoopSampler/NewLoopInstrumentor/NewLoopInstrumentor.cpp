@@ -104,6 +104,18 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
     InstrumentCallees(setCallees, originClonedMapping);
 
+    // Instrument Callees: OK
+    set<Function *> setClonedCallees;
+    for (Function *pFunc : setCallees) {
+        auto it = originClonedMapping.find(pFunc);
+        if (it != originClonedMapping.end()) {
+            Function *pClonedFunc = cast<Function>(it->second);
+            if (pClonedFunc) {
+                InlineGlobalCostForCallee(pClonedFunc);
+            }
+        }
+    }
+
     // Search monitored
     
     MonitoredRWInsts MI;
@@ -133,6 +145,7 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     vector<BasicBlock *> vecCloned;
     CloneInnerLoop(pLoop, vecAdded, originClonedMapping, vecCloned);
 
+
    
     //pFunction->dump();
 
@@ -144,9 +157,9 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     Instruction *hoistLoc = &*pClonedBody->getFirstInsertionPt();
 
 
-    assert(vecCloned.size()  == 3); 
+//    assert(vecCloned.size()  == 3);
    
-    pFunction->dump();
+//    pFunction->dump();
     /*
     InstrumentMonitoredInsts(clonedMI);
 
@@ -155,10 +168,20 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
 
 
+*/
+    // Cost Loop: ERROR! No Instrument Add
+    set<BasicBlock *> setBBInClonedLoop;
+    for (BasicBlock *BB : setBlocksInLoop) {
+        BasicBlock *clonedBB = cast<BasicBlock>(originClonedMapping[BB]);
+        errs() << clonedBB->getName() << "\n";
+        setBBInClonedLoop.insert(clonedBB);
+    }
+
+    InlineGlobalCostForLoop(setBBInClonedLoop);
 
     InstrumentMain("main");
 
-    */
+
     return true;
 }
 
@@ -330,12 +353,12 @@ void NewLoopInstrumentor::InlineNumGlobalCost(Loop *pLoop) {
 
     assert(pLoop);
     assert(this->numGlobalCost);
-    assert(this->ConstantInt1);
+    assert(this->ConstantLong1);
     BasicBlock *pHeader = pLoop->getHeader();
     Instruction *pHeaderTerm = pHeader->getTerminator();
 
     auto pLoad = new LoadInst(this->numGlobalCost, "numGlobalCost", pHeaderTerm);
-    BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pLoad, this->ConstantInt1, "numGlobalCost++:",
+    BinaryOperator *pBinary = BinaryOperator::Create(Instruction::Add, pLoad, this->ConstantLong1, "numGlobalCost++:",
                                                      pHeaderTerm);
     auto pStoreAdd = new StoreInst(pBinary, this->numGlobalCost, false, pHeaderTerm);
     pStoreAdd->setAlignment(4);
@@ -572,8 +595,9 @@ void NewLoopInstrumentor::SetupStructs() {
 
 void NewLoopInstrumentor::SetupConstants() {
 
-    // long: 0, 16
+    // long: 0, 1, 16
     this->ConstantLong0 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("0"), 10));
+    this->ConstantLong1 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("1"), 10));
     this->ConstantLong16 = ConstantInt::get(pModule->getContext(), APInt(64, StringRef("16"), 10));
 
     // int: -1, 0, 1, 2, 3, 4, 5, 6
@@ -647,10 +671,10 @@ void NewLoopInstrumentor::SetupGlobals() {
 
     // long numGlobalCost = 0;
     assert(pModule->getGlobalVariable("numGlobalCost") == nullptr);
-    this->numGlobalCost = new GlobalVariable(*pModule, this->IntType, false, GlobalValue::ExternalLinkage, nullptr,
+    this->numGlobalCost = new GlobalVariable(*pModule, this->LongType, false, GlobalValue::ExternalLinkage, nullptr,
                                              "numGlobalCost");
-    this->numGlobalCost->setAlignment(4);
-    this->numGlobalCost->setInitializer(this->ConstantInt0);
+    this->numGlobalCost->setAlignment(8);
+    this->numGlobalCost->setInitializer(this->ConstantLong0);
 }
 
 void NewLoopInstrumentor::SetupFunctions() {
@@ -929,7 +953,7 @@ void NewLoopInstrumentor::InstrumentMain(StringRef funcName) {
 void NewLoopInstrumentor::InlineOutputCost(Instruction *InsertBefore) {
 
     auto pLoad = new LoadInst(this->numGlobalCost, "", false, InsertBefore);
-    InlineSetRecord(this->ConstantLong0, pLoad, this->ConstantInt0, InsertBefore);
+    InlineSetRecord(pLoad, this->ConstantInt0, this->ConstantInt0, InsertBefore);
 }
 
 void NewLoopInstrumentor::InstrumentMonitoredInsts(MonitoredRWInsts &MI) {

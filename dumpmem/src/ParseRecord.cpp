@@ -164,22 +164,23 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
             case RecordFlag::Terminator: {
                 endFlag = true;
                 if (i > 0) {  // skip the first loop (loop begins with delimiter)
-                    if (record.address == 0UL && record.length != 0U) {
-                        auto cost = record.length;
+                    if (record.address != 0UL && record.length == 0U) {
+                        auto cost = record.address;
                         DEBUG_PRINT(("cost: %u\n", cost));
                         parseOneLoop(vecIndvarInfo, oneLoopRecord);
                         vecIndvarInfo.clear();
                         calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi, oneLoopIOFuncSize, allIOFuncSize);
                         dqStride = dqInitStride;
                         if (sumOfRi == 0) {
-                            DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, cost=%u\n", sumOfMiCi, sumOfRi, cost));
-                            printf("%u,%u\n", 0, cost);
+                            DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, cost=%lu\n", sumOfMiCi, sumOfRi, cost));
+                            printf("%u,%lu\n", 0, cost);
                         } else {
-                            DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, N=%lu, cost=%u\n", sumOfMiCi, sumOfRi, sumOfMiCi /
+                            DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, N=%lu, cost=%lu\n", sumOfMiCi, sumOfRi, sumOfMiCi /
                                                                                                              sumOfRi, cost));
-                            printf("%lu,%u\n", sumOfMiCi / sumOfRi, cost);
+                            printf("%lu,%lu\n", sumOfMiCi / sumOfRi, cost);
                         }
                     } else {
+                        fprintf(stderr, "cost=%lu, record=%u\n", record.address, record.length);
                         fprintf(stderr, "Wrong cost format\n");
                     }
                 }
