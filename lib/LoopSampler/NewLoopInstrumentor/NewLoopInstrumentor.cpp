@@ -169,7 +169,6 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
 
 */
-    // Cost Loop: ERROR! No Instrument Add
     set<BasicBlock *> setBBInClonedLoop;
     for (BasicBlock *BB : setBlocksInLoop) {
         BasicBlock *clonedBB = cast<BasicBlock>(originClonedMapping[BB]);
@@ -300,6 +299,7 @@ void NewLoopInstrumentor::InlineGlobalCostForLoop(std::set<BasicBlock* > & setBB
     bbGraph.init();
 
     bbGraph.splitGivenBlock(setBBInLoop);
+    bbGraph.calculateSpanningTree();
 
     BBProfilingEdge *pQueryEdge = bbGraph.addQueryChord();
     bbGraph.calculateChordIncrements();
