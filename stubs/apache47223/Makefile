@@ -13,7 +13,7 @@ ID_PASS=${LIB_DIR}lib/IDAssigner/libIDAssignerPass.so
 LOOP_INSTRUMENT_PASS=${LIB_DIR}lib/LoopSampler/NewLoopInstrumentor/libNewLoopInstrumentPass.so
 RUNTIME_LIB=${LIB_DIR}runtime/libRuntimeLib.a
 # bug fixed parts
-INDVAR_INFO=indvar.info
+INDVAR_INFO=indvar.pre.info
 FUNC_NAME_ID=func_name_id.txt
 TARGET=target.clonesample
 ORIGIN_TARGET=target
@@ -43,7 +43,7 @@ ${TARGET}${BELSEIF}: ${TARGET}${BELSEIF}.lalls.bc ${RUNTIME_LIB}
 	${CXX} ${OP_CFLAGS} ${LDFLAGS} $< -l${RUNTIME_LIB} -lm -lrt -o $@
 
 ${TARGET}${BELSEIF}.lalls.bc: ${TARGET}.bc.id ${LOOP_INSTRUMENT_PASS} ${SRC_FILE} ${INDVAR_INFO}
-	opt -load ${LOOP_INSTRUMENT_PASS} -loop-instrument \
+	opt -load ${LOOP_INSTRUMENT_PASS} -loop-instrument -debug-only "NewLoopInstrumentor" \
 	 -noLine ${LINENO} -strFile ${SRC_FILE} \
 	 -strFunc ${FUNCNAME} ${BELSEIF} $< > $@
 
@@ -65,7 +65,7 @@ ${ORIGIN_TARGET}.bc: ${SRC_FILE}
 install: ${TARGET}${BELSEIF} ${ORIGIN_TARGET} ${FUNC_NAME_ID} ${TARGET_DIR} ${RESULT_DIR}
 	cp ${TARGET}${BELSEIF} ${ORIGIN_TARGET} ${TARGET_DIR}
 	cp ${FUNC_NAME_ID} ${RESULT_DIR} 
-	cp ${INDVAR_INFO} ${RESULT_DIR}
+	cp indvar.info ${RESULT_DIR}
 
 ${TARGET_DIR}:
 	mkdir -p $@

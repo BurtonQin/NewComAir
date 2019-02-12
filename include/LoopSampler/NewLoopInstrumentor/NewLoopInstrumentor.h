@@ -66,11 +66,12 @@ private:
 
     bool readIndvarStride(const char *filePath, std::vector<IndvarInstIDStride> &vecIndvarInstIDStride);
 
-    bool cloneDependantInstsToPreHeader(Loop *pLoop, Instruction *pInst, Instruction *termOfPreheader, ValueToValueMapTy &VMap);
+    bool cloneDependantInsts(Loop *pLoop, Instruction *pInst, Instruction *InsertBefore, ValueToValueMapTy &VMap);
 
-    bool sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, ValueToValueMapTy &VMap);
+    bool sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, Instruction *InsertBefore, ValueToValueMapTy &VMap);
 
-    void insertBeforeExitLoop();
+    void insertBeforeExitLoop(Loop *pLoop, DominatorTree &DT, ValueToValueMapTy &VMap,
+                              map<BasicBlock *, BasicBlock *> &mapExit2Inter);
 
     // Clone and re-structure
     bool CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee, ValueToValueMapTy &originClonedMapping);

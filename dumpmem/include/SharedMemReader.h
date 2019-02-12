@@ -2,7 +2,7 @@
 #define NEWCOMAIR_DUMPMEM_SHAREDMEMREADER_H
 
 #include <stdio.h>
-#include <vector>
+#include <map>
 
 #define BUFFERSIZE (1UL << 33)
 
@@ -14,7 +14,7 @@ int openDebugLogFile(const char *logFileName, FILE *&pFile);
 
 int closeDebugLogFile(FILE *pFile);
 
-int readStrides(const char *indvarFileName, std::vector<int> &vecStride);
+int readIndvarStride(const char *indvarFileName, std::map<unsigned, int> &mapIndvarStride);
 
 
 #endif //NEWCOMAIR_DUMPMEM_SHAREDMEMREADER_H

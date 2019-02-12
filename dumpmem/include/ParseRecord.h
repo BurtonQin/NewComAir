@@ -9,8 +9,7 @@ enum RecordFlag : unsigned {
     Delimiter = 2147483647,
     LoadFlag,
     StoreFlag,
-    LoopBeginFlag,
-    LoopEndFlag
+    LoopFlag
 };
 
 enum OneLoopRecordFlag : unsigned {
@@ -28,6 +27,6 @@ struct struct_stMemRecord {
 
 typedef std::map<unsigned long, OneLoopRecordFlag> OneLoopRecordTy;
 
-void parseRecord(char *pcBuffer, const std::vector<int> &stride, FILE *pFile = nullptr);
+void parseRecord(char *pcBuffer,const std::map<unsigned, int> &mapIndvarStride, FILE *pFile = nullptr);
 
 #endif //NEWCOMAIR_DUMPMEM_PARSERECORD_H

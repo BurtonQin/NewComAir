@@ -61,8 +61,13 @@ void NewLoopInstrumentor::getAnalysisUsage(AnalysisUsage &AU) const {
 bool NewLoopInstrumentor::runOnModule(Module &M) {
 
     SetupInit(M);
-	
+
     std::error_code EC;
+    llvm::raw_fd_ostream outFileIndvarInfo("indvar.info", EC, llvm::sys::fs::F_Text);
+    if (outFileIndvarInfo.has_error()) {
+        errs() << "Cannot open indvar.info\n";
+        return false;
+    }
     llvm::raw_fd_ostream outFileInplace("inst_type_id_inplace.txt", EC, llvm::sys::fs::F_Text);
     if (outFileInplace.has_error()) {
         errs() << "Cannot open inst_type_id_inplace.txt\n";
@@ -73,11 +78,11 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         errs() << "Cannot open inst_type_id_hoist.txt\n";
         return false;
     }
-//    llvm::raw_fd_ostream outFileHoistSink("inst_type_id_hoistsink.txt", EC, llvm::sys::fs::F_Text);
-//    if (outFileHoistSink.has_error()) {
-//        errs() << "Cannot open inst_type_id_hoistsink.txt\n";
-//        return false;
-//    }
+    llvm::raw_fd_ostream outFileHoistSink("inst_type_id_hoistsink.txt", EC, llvm::sys::fs::F_Text);
+    if (outFileHoistSink.has_error()) {
+        errs() << "Cannot open inst_type_id_hoistsink.txt\n";
+        return false;
+    }
 
     Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
     if (!pFunction) {
@@ -123,33 +128,34 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     // Search monitored
     MonitoredRWInsts inplaceMI;
     MonitoredRWInsts hoistMI;
-//    MonitoredRWInsts hoistSinkMI;
+    MonitoredRWInsts hoistSinkMI;
 
     LOOP_TYPE loopType = getArrayListInsts(pLoop, inplaceMI);
     if (loopType == LOOP_TYPE::ARRAY && !inplaceMI.mapLoadID.empty()) {
 
-//        vector<IndvarInstIDStride> vecIndvarInstIDStride;
-//        if (readIndvarStride("indvar.info", vecIndvarInstIDStride)) {
-//            for (auto &kv : inplaceMI.mapLoadID) {
-//                LoadInst *pLoad = kv.first;
-//                unsigned uID = kv.second;
-//                for (auto &v : vecIndvarInstIDStride) {
-//                    if (v.indvarInstID == uID) {
-//                        hoistSinkMI.mapLoadID[pLoad] = uID;
-//                        inplaceMI.mapLoadID.erase(pLoad);
-//                    }
-//                }
-//            }
-//        }
+        vector<IndvarInstIDStride> vecIndvarInstIDStride;
+        if (readIndvarStride("indvar.pre.info", vecIndvarInstIDStride)) {
+            for (auto &kv : inplaceMI.mapLoadID) {
+                LoadInst *pLoad = kv.first;
+                unsigned uID = kv.second;
+                for (auto &v : vecIndvarInstIDStride) {
+                    if (v.indvarInstID == uID) {
+                        hoistSinkMI.mapLoadID[pLoad] = uID;
+                        outFileIndvarInfo << uID << "," << v.stride << "\n";
+                        inplaceMI.mapLoadID.erase(pLoad);
+                    }
+                }
+            }
+        }
         DEBUG(dbgs() << "Inplace:\n");
         DEBUG(inplaceMI.dump());
         DEBUG(dbgs() << "Hoist:\n");
         DEBUG(hoistMI.dump());
-//        DEBUG(dbgs() << "HoistSink:\n");
-//        DEBUG(hoistSinkMI.dump());
+        DEBUG(dbgs() << "HoistSink:\n");
+        DEBUG(hoistSinkMI.dump());
         inplaceMI.print(outFileInplace);
         hoistMI.print(outFileHoist);
-//        hoistSinkMI.print(outFileHoistSink);
+        hoistSinkMI.print(outFileHoistSink);
 
     } else if (loopType == LOOP_TYPE::LINKEDLIST && !inplaceMI.mapLoadID.empty()) {
 
@@ -157,11 +163,11 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         DEBUG(inplaceMI.dump());
         DEBUG(dbgs() << "Hoist:\n");
         DEBUG(hoistMI.dump());
-//        DEBUG(dbgs() << "HoistSink:\n");
-//        DEBUG(hoistSinkMI.dump());
+        DEBUG(dbgs() << "HoistSink:\n");
+        DEBUG(hoistSinkMI.dump());
         inplaceMI.print(outFileInplace);
         hoistMI.print(outFileHoist);
-//        hoistSinkMI.print(outFileHoistSink);
+        hoistSinkMI.print(outFileHoistSink);
 
     } else {
 
@@ -176,11 +182,11 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         DEBUG(inplaceMI.dump());
         DEBUG(dbgs() << "Hoist:\n");
         DEBUG(hoistMI.dump());
-//        DEBUG(dbgs() << "HoistSink:\n");
-//        DEBUG(hoistSinkMI.dump());
+        DEBUG(dbgs() << "HoistSink:\n");
+        DEBUG(hoistSinkMI.dump());
         inplaceMI.print(outFileInplace);
         hoistMI.print(outFileHoist);
-//        hoistSinkMI.print(outFileHoistSink);
+        hoistSinkMI.print(outFileHoistSink);
 
     }
 
@@ -206,18 +212,49 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         HoistOrSinkMonitoredInsts(hoistClonedMI, hoistLoc);
     }
 
-//    if (!hoistSinkMI.empty()) {
-//        Instruction *hoistLoc = &*pClonedBody->getTerminator();
-//        for (auto &kv : hoistSinkMI.mapLoadID) {
-//            LoadInst *pLoad = kv.first;
-//            bool ok = cloneDependantInstsToPreHeader(pLoop, pLoad, hoistLoc, originClonedMapping);
-//            assert(ok);
-//            ok = sinkInstsToLoopExit(pLoop, pLoad, originClonedMapping);
-//            assert(ok);
-//        }
-//
-//        pFunction->dump();
-//    }
+    if (!hoistSinkMI.empty()) {
+        // Get Sink InsertPt
+        map<BasicBlock *, BasicBlock *> mapExit2Inter;
+        insertBeforeExitLoop(pLoop, DT, originClonedMapping, mapExit2Inter);
+
+        set<BasicBlock *> setClonedInterBlock;
+        for (auto &kv : mapExit2Inter) {
+            setClonedInterBlock.insert(kv.second);
+        }
+        // Get Hoist InsertPt
+        Instruction *hoistLoc = pClonedBody->getTerminator();
+        for (auto &kv : hoistSinkMI.mapLoadID) {
+            LoadInst *pLoad = kv.first;
+
+            auto it = originClonedMapping.find(pLoad);
+            if (it == originClonedMapping.end()) {
+                return false;
+            }
+            LoadInst *pClonedLoad = dyn_cast<LoadInst>(it->second);
+            if (!pClonedLoad) {
+                return false;
+            }
+
+            bool ok = cloneDependantInsts(pLoop, pLoad, hoistLoc, originClonedMapping);
+            assert(ok);
+
+            for (auto &kv : mapExit2Inter) {
+                BasicBlock *ExitBlock = kv.first;
+                BasicBlock *InterBlock = kv.second;
+                Instruction *sinkLoc = InterBlock->getTerminator();
+                Instruction *pAddr = dyn_cast<Instruction>(pClonedLoad->getOperand(0));
+                assert(pAddr);
+
+                if (DT.dominates(pAddr, ExitBlock)) {
+                    ok = sinkInstsToLoopExit(pLoop, pLoad, sinkLoc, originClonedMapping);
+                    assert(ok);
+                } else {
+                    ok = cloneDependantInsts(pLoop, pLoad, sinkLoc, originClonedMapping);
+                    assert(ok);
+                }
+            }
+        }
+    }
 
     set<BasicBlock *> setBBInClonedLoop;
     for (BasicBlock *BB : setBlocksInLoop) {
@@ -238,7 +275,8 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     return true;
 }
 
-bool NewLoopInstrumentor::readIndvarStride(const char *filePath, std::vector<IndvarInstIDStride> &vecIndvarInstIDStride) {
+bool
+NewLoopInstrumentor::readIndvarStride(const char *filePath, std::vector<IndvarInstIDStride> &vecIndvarInstIDStride) {
 
     std::ifstream infile(filePath);
 
@@ -357,12 +395,11 @@ void NewLoopInstrumentor::removeByDomInfo(DominatorTree &DT, vector<set<Instruct
 }
 
 
-void NewLoopInstrumentor::InlineGlobalCostForLoop(std::set<BasicBlock* > & setBBInLoop) 
-{
-    Function * pFunction = NULL;
+void NewLoopInstrumentor::InlineGlobalCostForLoop(std::set<BasicBlock *> &setBBInLoop) {
+    Function *pFunction = NULL;
 
-    set<BasicBlock*>::iterator itSetBegin = setBBInLoop.begin();
-    set<BasicBlock*>::iterator itSetEnd = setBBInLoop.end();
+    set<BasicBlock *>::iterator itSetBegin = setBBInLoop.begin();
+    set<BasicBlock *>::iterator itSetEnd = setBBInLoop.end();
 
     assert(itSetBegin != itSetEnd);
 
@@ -377,26 +414,23 @@ void NewLoopInstrumentor::InlineGlobalCostForLoop(std::set<BasicBlock* > & setBB
     BBProfilingEdge *pQueryEdge = bbGraph.addQueryChord();
     bbGraph.calculateChordIncrements();
 
-    Instruction * entryInst = pFunction->getEntryBlock().getFirstNonPHI();
+    Instruction *entryInst = pFunction->getEntryBlock().getFirstNonPHI();
     AllocaInst *numLocalCounter = new AllocaInst(this->LongType, 0, "LOCAL_COST_BB", entryInst);
     numLocalCounter->setAlignment(8);
     StoreInst *pStore = new StoreInst(ConstantInt::get(this->LongType, 0), numLocalCounter, false, entryInst);
     pStore->setAlignment(8);
 
-    bbGraph.instrumentLocalCounterUpdate(numLocalCounter, this->numGlobalCost);   
+    bbGraph.instrumentLocalCounterUpdate(numLocalCounter, this->numGlobalCost);
 
     ///return true;
 }
 
-void NewLoopInstrumentor::InlineGlobalCostForCallee(Function * pFunction)
-{
-    if(pFunction->getName() == "JS_Assert")
-    {
+void NewLoopInstrumentor::InlineGlobalCostForCallee(Function *pFunction) {
+    if (pFunction->getName() == "JS_Assert") {
         return;
     }
 
-    if(pFunction->begin() == pFunction->end())
-    {
+    if (pFunction->begin() == pFunction->end()) {
         return;
     }
 
@@ -419,7 +453,6 @@ void NewLoopInstrumentor::InlineGlobalCostForCallee(Function * pFunction)
 
     //return true;
 }
-
 
 
 void NewLoopInstrumentor::InlineNumGlobalCost(Loop *pLoop) {
@@ -555,12 +588,13 @@ void NewLoopInstrumentor::InlineHookMemSet(MemSetInst *pMemSet, unsigned uID, In
     Value *len = pMemSet->getLength();
     assert(len);
     CastInst *int64_address = new PtrToIntInst(dest, this->LongType, "", InsertBefore);
-    CastInst* int32_len = new TruncInst(len, this->IntType, "memset_len_conv", InsertBefore);
+    CastInst *int32_len = new TruncInst(len, this->IntType, "memset_len_conv", InsertBefore);
     ConstantInt *const_id = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(std::to_string(ID)), 10));
     InlineSetRecord(int64_address, int32_len, const_id, InsertBefore);
 }
 
-void NewLoopInstrumentor::InlineHookMemTransfer(MemTransferInst *pMemTransfer, unsigned uID, Instruction *InsertBefore) {
+void
+NewLoopInstrumentor::InlineHookMemTransfer(MemTransferInst *pMemTransfer, unsigned uID, Instruction *InsertBefore) {
 
     assert(pMemTransfer && InsertBefore);
     assert(uID != INVALID_ID && MIN_ID <= uID && uID <= MAX_ID);
@@ -579,9 +613,11 @@ void NewLoopInstrumentor::InlineHookMemTransfer(MemTransferInst *pMemTransfer, u
     assert(len);
     CastInst *src_int64_address = new PtrToIntInst(src, this->LongType, "", InsertBefore);
     CastInst *dest_int64_address = new PtrToIntInst(dest, this->LongType, "", InsertBefore);
-    CastInst* int32_len = new TruncInst(len, this->IntType, "memtransfer_len_conv", InsertBefore);
-    ConstantInt *const_src_id = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(std::to_string(srcID)), 10));
-    ConstantInt *const_dst_id = ConstantInt::get(this->pModule->getContext(), APInt(32, StringRef(std::to_string(dstID)), 10));
+    CastInst *int32_len = new TruncInst(len, this->IntType, "memtransfer_len_conv", InsertBefore);
+    ConstantInt *const_src_id = ConstantInt::get(this->pModule->getContext(),
+                                                 APInt(32, StringRef(std::to_string(srcID)), 10));
+    ConstantInt *const_dst_id = ConstantInt::get(this->pModule->getContext(),
+                                                 APInt(32, StringRef(std::to_string(dstID)), 10));
     InlineSetRecord(src_int64_address, int32_len, const_src_id, InsertBefore);
     InlineSetRecord(dest_int64_address, int32_len, const_dst_id, InsertBefore);
 }
@@ -807,7 +843,8 @@ void NewLoopInstrumentor::SetupFunctions() {
     }
 }
 
-bool NewLoopInstrumentor::CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee, ValueToValueMapTy &originClonedMapping) {
+bool NewLoopInstrumentor::CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee,
+                                            ValueToValueMapTy &originClonedMapping) {
 
     std::map<Function *, std::set<Instruction *>> funcCallSiteMapping;
     FindCalleesInDepth(setBB, setCallee, funcCallSiteMapping);
@@ -822,8 +859,8 @@ bool NewLoopInstrumentor::CloneRemapCallees(const std::set<BasicBlock *> &setBB,
 }
 
 void NewLoopInstrumentor::FindDirectCallees(const std::set<BasicBlock *> &setBB, std::vector<Function *> &vecWorkList,
-                       std::set<Function *> &setToDo,
-                       std::map<Function *, std::set<Instruction *>> &funcCallSiteMapping) {
+                                            std::set<Function *> &setToDo,
+                                            std::map<Function *, std::set<Instruction *>> &funcCallSiteMapping) {
 
     for (BasicBlock *BB : setBB) {
         if (isa<UnreachableInst>(BB->getTerminator())) {
@@ -1119,7 +1156,8 @@ void NewLoopInstrumentor::HoistOrSinkMonitoredInsts(MonitoredRWInsts &MI, Instru
     }
 }
 
-void NewLoopInstrumentor::InstrumentCallees(std::set<Function *> setOriginFunc, ValueToValueMapTy &originClonedMapping) {
+void
+NewLoopInstrumentor::InstrumentCallees(std::set<Function *> setOriginFunc, ValueToValueMapTy &originClonedMapping) {
 
     MonitoredRWInsts MI;
     MonitoredRWInsts clonedMI;
@@ -1235,18 +1273,14 @@ void NewLoopInstrumentor::CreateIfElseBlock(Loop *pInnerLoop, vector<BasicBlock 
         pStore->setAlignment(4);
         BranchInst::Create(pHeader, pElseBody);
 
-        for(BasicBlock::iterator II = pHeader->begin(); II != pHeader->end(); II ++ )
-        {
-            Instruction * I = &* II;
-            if(PHINode * pPHI = dyn_cast<PHINode>(I))
-            {
+        for (BasicBlock::iterator II = pHeader->begin(); II != pHeader->end(); II++) {
+            Instruction *I = &*II;
+            if (PHINode *pPHI = dyn_cast<PHINode>(I)) {
                 unsigned numIncomming = pPHI->getNumIncomingValues();
-                for(unsigned j = 0; j < numIncomming; j ++ )
-                {
-                    BasicBlock * incommingBlock = pPHI->getIncomingBlock(j);
+                for (unsigned j = 0; j < numIncomming; j++) {
+                    BasicBlock *incommingBlock = pPHI->getIncomingBlock(j);
 
-                    if(incommingBlock == pCondition1)
-                    {
+                    if (incommingBlock == pCondition1) {
                         pPHI->setIncomingBlock(j, pElseBody);
                     }
                 }
@@ -1401,7 +1435,7 @@ void NewLoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, vector<BasicBloc
 }
 
 void NewLoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
-                                      vector<BasicBlock *> &vecCloned) {
+                                         vector<BasicBlock *> &vecCloned) {
 
     Function *pFunction = pLoop->getHeader()->getParent();
 
@@ -1503,7 +1537,7 @@ void NewLoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecA
                 unsigned numIncomming = pPHI->getNumIncomingValues();
                 for (unsigned j = 0; j < numIncomming; j++) {
                     BasicBlock *incommingBlock = pPHI->getIncomingBlock(j);
-                    if (VMap.find(incommingBlock) != VMap.end() && VMap[incommingBlock] != incommingBlock ) {
+                    if (VMap.find(incommingBlock) != VMap.end() && VMap[incommingBlock] != incommingBlock) {
                         Value *incommingValue = pPHI->getIncomingValue(j);
                         if (VMap.find(incommingValue) != VMap.end()) {
                             incommingValue = VMap[incommingValue];
@@ -1517,108 +1551,91 @@ void NewLoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecA
 
     map<Instruction *, set<Instruction *> > mapAddPHI;
 
-    for (Loop::block_iterator BB = pLoop->block_begin(); BB != pLoop->block_end(); BB++) 
-    {
-        BasicBlock * B = *BB;
-        for(BasicBlock::iterator II = B->begin(); II != B->end(); II ++ )
-        {
-           Instruction * I = &*II;
-           for(Instruction::user_iterator UU = I->user_begin(); UU != I->user_end(); UU ++ )
-           {
-               if(Instruction * IU = dyn_cast<Instruction>(*UU))
-               {
-                    if(!pLoop->contains(IU->getParent()))
-                    {
-                        if(mapAddPHI.find(I) == mapAddPHI.end() )
-                        {
-                           set<Instruction *> setTmp;
-                           mapAddPHI[I] = setTmp;
+    for (Loop::block_iterator BB = pLoop->block_begin(); BB != pLoop->block_end(); BB++) {
+        BasicBlock *B = *BB;
+        for (BasicBlock::iterator II = B->begin(); II != B->end(); II++) {
+            Instruction *I = &*II;
+            for (Instruction::user_iterator UU = I->user_begin(); UU != I->user_end(); UU++) {
+                if (Instruction *IU = dyn_cast<Instruction>(*UU)) {
+                    if (!pLoop->contains(IU->getParent())) {
+                        if (mapAddPHI.find(I) == mapAddPHI.end()) {
+                            set<Instruction *> setTmp;
+                            mapAddPHI[I] = setTmp;
                         }
 
                         mapAddPHI[I].insert(IU);
                     }
-               }
-           }     
+                }
+            }
         }
     }
 
     map<Instruction *, set<Instruction *> >::iterator itMapBegin = mapAddPHI.begin();
     map<Instruction *, set<Instruction *> >::iterator itMapEnd = mapAddPHI.end();
 
-    for(; itMapBegin != itMapEnd; itMapBegin ++ )
-    {
-         Instruction * I = itMapBegin->first;
+    for (; itMapBegin != itMapEnd; itMapBegin++) {
+        Instruction *I = itMapBegin->first;
 
-         if(VMap.find(I) == VMap.end())
-         {
-             continue;
-         }
-      
-         BasicBlock * pInsert = NULL;
-         for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
-             set<Instruction *>::iterator itSetBegin = itMapBegin->second.begin();
-             set<Instruction *>::iterator itSetEnd = itMapBegin->second.end();
+        if (VMap.find(I) == VMap.end()) {
+            continue;
+        }
 
-             bool bFlag = true;
-             for(; itSetBegin != itSetEnd; itSetBegin++)
-             {
-                 if(ExitBlocks[i] !=  (*itSetBegin)->getParent())
-                 {
-                     bFlag = false;
-                     break;;
-                 }
-             }
+        BasicBlock *pInsert = NULL;
+        for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
+            set<Instruction *>::iterator itSetBegin = itMapBegin->second.begin();
+            set<Instruction *>::iterator itSetEnd = itMapBegin->second.end();
 
-            if(bFlag)
-            {
+            bool bFlag = true;
+            for (; itSetBegin != itSetEnd; itSetBegin++) {
+                if (ExitBlocks[i] != (*itSetBegin)->getParent()) {
+                    bFlag = false;
+                    break;;
+                }
+            }
+
+            if (bFlag) {
                 pInsert = ExitBlocks[i];
                 break;
             }
 
-         }   
+        }
 
-         if(pInsert == NULL)
-         {
-             assert(0);
-         }
+        if (pInsert == NULL) {
+            assert(0);
+        }
 
-         PHINode* pPHI = PHINode::Create(I->getType(), 2, ".Created.PHI", pInsert->getFirstNonPHI());
+        PHINode *pPHI = PHINode::Create(I->getType(), 2, ".Created.PHI", pInsert->getFirstNonPHI());
 
-         BasicBlock * pIncomingBlock1 = NULL;
+        BasicBlock *pIncomingBlock1 = NULL;
 
-         for (pred_iterator PI = pred_begin(pInsert), PE = pred_end(pInsert); PI != PE; ++PI)
-         {
-             BasicBlock * BB = *PI;
-             if(pLoop->contains(BB))
-             {
-                 pIncomingBlock1 = BB;
-             }
-         }
+        for (pred_iterator PI = pred_begin(pInsert), PE = pred_end(pInsert); PI != PE; ++PI) {
+            BasicBlock *BB = *PI;
+            if (pLoop->contains(BB)) {
+                pIncomingBlock1 = BB;
+            }
+        }
 
 
-         pPHI->addIncoming(I, pIncomingBlock1);
+        pPHI->addIncoming(I, pIncomingBlock1);
 
-         BasicBlock * clonedBB = dyn_cast<BasicBlock>(VMap[pIncomingBlock1]);
-         pPHI->addIncoming(VMap[I], clonedBB);
-      
-         set<Instruction *>::iterator itSetBegin = itMapBegin->second.begin();
-         set<Instruction *>::iterator itSetEnd = itMapBegin->second.end();
+        BasicBlock *clonedBB = dyn_cast<BasicBlock>(VMap[pIncomingBlock1]);
+        pPHI->addIncoming(VMap[I], clonedBB);
 
-         for(; itSetBegin != itSetEnd; itSetBegin++)
-         {
-             Instruction * IU = *itSetBegin;
+        set<Instruction *>::iterator itSetBegin = itMapBegin->second.begin();
+        set<Instruction *>::iterator itSetEnd = itMapBegin->second.end();
 
-             unsigned indexOperand = 0 ;
+        for (; itSetBegin != itSetEnd; itSetBegin++) {
+            Instruction *IU = *itSetBegin;
 
-             for(; indexOperand < IU->getNumOperands(); indexOperand ++ )
-             {
-                if(IU->getOperand(indexOperand) == I)
-                {
+            unsigned indexOperand = 0;
+
+            for (; indexOperand < IU->getNumOperands(); indexOperand++) {
+                if (IU->getOperand(indexOperand) == I) {
                     IU->setOperand(indexOperand, pPHI);
                 }
-             }
-             
-         }   
+            }
+
+        }
     }
 
 }
@@ -1681,7 +1698,8 @@ void NewLoopInstrumentor::getInstsToBeHoisted(Loop *pLoop, AliasAnalysis &AA, Mo
     // TODO: mem and IO wait to be verified
 }
 
-bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instruction *pInst, Instruction *termOfPreheader, ValueToValueMapTy &VMap) {
+bool NewLoopInstrumentor::cloneDependantInsts(Loop *pLoop, Instruction *pInst, Instruction *InsertBefore,
+                                              ValueToValueMapTy &VMap) {
 
 //    errs() << pLoop->contains(pInst) << ":\n";
 //    pInst->dump();
@@ -1760,7 +1778,6 @@ bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instructio
         auto it = VMap.find(pOrigin);
         if (it != VMap.end()) {
             if (Instruction *pCloned = cast<Instruction>(it->second)) {
-                pCloned->dump();
                 clonedToClone.push_back(pCloned);
             }
         }
@@ -1776,7 +1793,7 @@ bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instructio
         }
         VMap[pInstToClone] = pClonedInst;
         cloned.push_back(pClonedInst);
-        pClonedInst->insertBefore(termOfPreheader);
+        pClonedInst->insertBefore(InsertBefore);
     }
 
     for (Instruction *pClonedInst : cloned) {
@@ -1792,7 +1809,7 @@ bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instructio
     if (it == VMap.end()) {
         return false;
     }
-    // the cloned Insts in preheader
+    // the cloned Insts in hoist/sink loc
     auto it2 = VMap.find(it->second);
     if (it2 == VMap.end()) {
         return false;
@@ -1806,7 +1823,8 @@ bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instructio
     }
 }
 
-bool NewLoopInstrumentor::sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, ValueToValueMapTy &VMap) {
+bool NewLoopInstrumentor::sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, Instruction *InsertBefore,
+                                              ValueToValueMapTy &VMap) {
 
 //    SmallVector<BasicBlock *, 4> vecExitBlocks;
 //    pLoop->getExitBlocks(vecExitBlocks);
@@ -1829,17 +1847,19 @@ bool NewLoopInstrumentor::sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, V
 //        setPreExitBlock.insert(PreExit);
 //    }
 //
-//    unsigned uID = GetInstructionID(pInst);
-//    assert(uID != INVALID_ID && MIN_ID <= uID && uID <= MAX_ID);
-//
-//    auto it = VMap.find(pInst);
-//    if (it == VMap.end()) {
-//        return false;
-//    }
-//    LoadInst *pClonedLoad = dyn_cast<LoadInst>(it->second);
-//    if (!pClonedLoad) {
-//        return false;
-//    }
+    unsigned uID = GetInstructionID(pInst);
+    assert(uID != INVALID_ID && MIN_ID <= uID && uID <= MAX_ID);
+
+    auto it = VMap.find(pInst);
+    if (it == VMap.end()) {
+        return false;
+    }
+    LoadInst *pClonedLoad = dyn_cast<LoadInst>(it->second);
+    if (!pClonedLoad) {
+        return false;
+    }
+
+    InlineHookLoad(pClonedLoad, uID, InsertBefore);
 //
 //    for (BasicBlock *BB : setPreExitBlock) {
 //        errs() << BB->getName() << "\n";
@@ -1848,6 +1868,74 @@ bool NewLoopInstrumentor::sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, V
 //        InlineHookLoad(pClonedLoad, uID, InsertBefore);
 //    }
 
+
+
     return true;
+}
+
+void NewLoopInstrumentor::insertBeforeExitLoop(Loop *pLoop, DominatorTree &DT, ValueToValueMapTy &VMap,
+                                               map<BasicBlock *, BasicBlock *> &mapExit2Inter) {
+
+    Function *pFunction = pLoop->getHeader()->getParent();
+
+    SmallVector<BasicBlock *, 4> vecExitBlock;
+    pLoop->getExitBlocks(vecExitBlock);
+
+    SmallDenseSet<BasicBlock *> setNonDomExitBlock;
+    for (const auto &dominatee : vecExitBlock) {
+        bool isDominated = false;
+        for (const auto &dominator : vecExitBlock) {
+            if (dominatee != dominator && DT.dominates(dominator, dominatee)) {
+                isDominated = true;
+                break;
+            }
+        }
+        if (!isDominated) {
+            setNonDomExitBlock.insert(dominatee);
+        }
+    }
+
+    SmallVector<Loop::Edge, 4> vecExitEdge;
+    pLoop->getExitEdges(vecExitEdge);
+
+    SmallDenseSet<Loop::Edge> setNonDomExitEdge;
+    for (auto &exitEdge : vecExitEdge) {
+        const BasicBlock *outsideBlock = exitEdge.second;
+        if (outsideBlock &&
+            std::find(setNonDomExitBlock.begin(), setNonDomExitBlock.end(), outsideBlock) != setNonDomExitBlock.end()) {
+            setNonDomExitEdge.insert(exitEdge);
+        }
+    }
+
+    for (auto &exitEdge : setNonDomExitEdge) {
+        const BasicBlock *insideBlock = exitEdge.first;
+        const BasicBlock *outsideBlock = exitEdge.second;
+
+        // convert
+        BasicBlock *clonedInsideBlock = nullptr;
+        BasicBlock *clonedOutsideBlock = nullptr;
+        ValueToValueMapTy::iterator It = VMap.find(insideBlock);
+        if (It != VMap.end()) {
+            clonedInsideBlock = cast<BasicBlock>(It->second);
+        }
+        It = VMap.find(outsideBlock);
+        if (It != VMap.end()) {
+            clonedOutsideBlock = cast<BasicBlock>(It->second);
+        }
+
+        BasicBlock *interBlock = BasicBlock::Create(clonedInsideBlock->getContext(), ".inter.block.CPI", pFunction);
+
+        TerminatorInst *TI = clonedInsideBlock->getTerminator();
+
+        for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i) {
+            if (TI->getSuccessor(i) == clonedOutsideBlock) {
+                TI->setSuccessor(i, interBlock);
+                BranchInst::Create(clonedOutsideBlock, interBlock);
+                interBlock->replaceSuccessorsPhiUsesWith(interBlock);
+
+                mapExit2Inter[clonedOutsideBlock] = interBlock;
+            }
+        }
+    }
 }
 

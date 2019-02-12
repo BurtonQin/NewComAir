@@ -3,14 +3,23 @@
 #include <string.h>
 
 #include <set>
-#include <deque>
+//#include <deque>
 #include <algorithm>
+#include <limits.h>
+#include <assert.h>
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) printf x
 #else
 # define DEBUG_PRINT(x) do {} while (0)
 #endif
+
+constexpr unsigned INVALID_ID = 0;
+constexpr unsigned MIN_ID = 1;
+constexpr unsigned DELIMIT = INT_MAX;
+constexpr unsigned LOOP_BEGIN = INT_MAX - 1;
+constexpr unsigned LOOP_END = INT_MAX - 2;
+constexpr unsigned MAX_ID = INT_MAX - 3;
 
 struct IndvarInfo {
     struct_stMemRecord beginRecord;
@@ -20,52 +29,64 @@ struct IndvarInfo {
 
 typedef std::vector<IndvarInfo> VecIndvarInfoTy;
 
-// parseOneLoop gets indvar address access
-// It is called after non-indvar address access calculated
-// Here it is assumed that there is no address access conflicts between "Load indvar" and "Store non-indvar"
-// If it is not satisfied (which is rare), then the logic should be re-checked.
-static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &oneLoopRecord) {
+static bool isIndvar(unsigned uID, const std::map<unsigned, int> &mapIndvarStride) {
+    return mapIndvarStride.find(uID) != mapIndvarStride.end();
+}
 
-    for (const auto &indvarInfo : vecIndvarInfo) {
+static int getStride(unsigned uID, const std::map<unsigned, int> &mapIndvarStride) {
+    const auto it = mapIndvarStride.find(uID);
+    if (it != mapIndvarStride.end()) {
+        return it->second;
+    } else {
+        return 0;
+    }
+}
 
-        auto stride = indvarInfo.stride;
+struct ArrayBeginEnd {
+    unsigned long begin;
+    unsigned long end;
+    unsigned length;
+    int stride;
+
+    bool check() const {
+        if (length == 0) {
+            fprintf(stderr, "length == 0\n");
+            return false;
+        }
         if (stride == 0) {
-            fprintf(stderr, "Stride == 0\n");
-            continue;
+            fprintf(stderr, "stride == 0\n");
+            return false;
+        }
+        if ((end - begin) / stride <= 0) {
+            fprintf(stderr, "(end - begin) / stride <= 0\n");
+            return false;
+        }
+        return true;
+    }
+
+    bool add(OneLoopRecordTy &oneLoopRecord) const {
+        if (!check()) {
+            return false;
+        }
+        // make sure begin < end and stride > 0
+        unsigned long tmpBegin = begin;
+        unsigned long tmpEnd = end;
+        int tmpStride = stride;
+        if (tmpStride < 0) {
+            tmpStride = -tmpStride;
+            unsigned long temp = tmpBegin;
+            tmpBegin = tmpEnd;
+            tmpEnd = temp;
         }
 
-        if (stride < 0) {
-            stride = -stride;
-        }
-
-        auto beginLength = indvarInfo.beginRecord.length;
-        auto endLength = indvarInfo.endRecord.length;
-
-        if (beginLength != endLength) {
-            fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
-            continue;
-        }
-
-        auto &length = beginLength;
-
-        auto byteNum = length / 8;
-
-        auto beginAddr = indvarInfo.beginRecord.address;
-        auto endAddr = indvarInfo.endRecord.address;
-
-        if (beginAddr > endAddr) {
-            auto tmp = beginAddr;
-            beginAddr = endAddr;
-            endAddr = tmp;
-        }
-
+        unsigned byteNum = length / 8;
         unsigned byteCounter = 0;
 
         // Assume that stride == 2
         //        Addr |0|1|2|3|x|x|x|x|8|9|10|11|...
         // byteCounter |1|2|3|4|------>|1|2|3 |4 |...
 
-        for (auto addr = beginAddr; addr <= endAddr; addr += 1) {
+        for (unsigned long addr = tmpBegin; addr <= tmpEnd; addr += 1) {
             if (oneLoopRecord[addr] == OneLoopRecordFlag::Uninitialized) {
                 oneLoopRecord[addr] = OneLoopRecordFlag::FirstLoad;
             }
@@ -74,11 +95,110 @@ static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &
             // Move byte num of (stride-1)
             if (byteCounter == byteNum) {
                 byteCounter = 0;
-                addr += byteNum * (stride - 1);
+                addr += byteNum * (tmpStride - 1);
             }
         }
+
+        return true;
+    }
+};
+
+static bool collectIndvar(const struct_stMemRecord &record, const std::map<unsigned, int> &mapIndvarStride, std::map<unsigned, ArrayBeginEnd> &mapArrayInfo) {
+    int id = record.id;
+    if (id < 0) {
+        id = -id;
+    }
+    unsigned uID = (unsigned)id;
+    if (uID == INVALID_ID || MIN_ID > uID || uID > MAX_ID) {
+        return false;
+    }
+    if (!isIndvar(uID, mapIndvarStride)) {
+        return false;
+    }
+
+    auto it = mapArrayInfo.find(uID);
+    if (it == mapArrayInfo.end()) {  // Begin
+        ArrayBeginEnd arrayBeginEnd;
+        arrayBeginEnd.begin = record.address;
+        arrayBeginEnd.length = record.length;
+        arrayBeginEnd.stride = getStride(uID, mapIndvarStride);
+        mapArrayInfo[uID] = arrayBeginEnd;
+    } else {  // end
+        if (it->second.length != record.length) {
+            fprintf(stderr, "Inst %u : Begin length != End length", uID);
+            return false;
+        }
+        it->second.end = record.address;
+    }
+
+    return true;
+}
+
+static void calcIndvar(const std::map<unsigned, ArrayBeginEnd> &mapArrayInfo, OneLoopRecordTy &oneLoopRecord) {
+    for (auto &kv : mapArrayInfo) {
+        kv.second.add(oneLoopRecord);
     }
 }
+
+// parseOneLoop gets indvar address access
+// It is called after non-indvar address access calculated
+// Here it is assumed that there is no address access conflicts between "Load indvar" and "Store non-indvar"
+// If it is not satisfied (which is rare), then the logic should be re-checked.
+//static void parseOneLoop(const VecIndvarInfoTy &vecIndvarInfo, OneLoopRecordTy &oneLoopRecord) {
+//
+//    for (const auto &indvarInfo : vecIndvarInfo) {
+//
+//        auto stride = indvarInfo.stride;
+//        if (stride == 0) {
+//            fprintf(stderr, "Stride == 0\n");
+//            continue;
+//        }
+//
+//        if (stride < 0) {
+//            stride = -stride;
+//        }
+//
+//        auto beginLength = indvarInfo.beginRecord.length;
+//        auto endLength = indvarInfo.endRecord.length;
+//
+//        if (beginLength != endLength) {
+//            fprintf(stderr, "Indvar Begin Length != Indvar End Length\n");
+//            continue;
+//        }
+//
+//        auto &length = beginLength;
+//
+//        auto byteNum = length / 8;
+//
+//        auto beginAddr = indvarInfo.beginRecord.address;
+//        auto endAddr = indvarInfo.endRecord.address;
+//
+//        if (beginAddr > endAddr) {
+//            auto tmp = beginAddr;
+//            beginAddr = endAddr;
+//            endAddr = tmp;
+//        }
+//
+//        unsigned byteCounter = 0;
+//
+//        // Assume that stride == 2
+//        //        Addr |0|1|2|3|x|x|x|x|8|9|10|11|...
+//        // byteCounter |1|2|3|4|------>|1|2|3 |4 |...
+//
+//        for (auto addr = beginAddr; addr <= endAddr; addr += 1) {
+//            if (oneLoopRecord[addr] == OneLoopRecordFlag::Uninitialized) {
+//                oneLoopRecord[addr] = OneLoopRecordFlag::FirstLoad;
+//            }
+//
+//            ++byteCounter;
+//            // Move byte num of (stride-1)
+//            if (byteCounter == byteNum) {
+//                byteCounter = 0;
+//                addr += byteNum * (stride - 1);
+//            }
+//        }
+//    }
+//}
 
 static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &allDistinctAddr, unsigned long &sumOfMiCi,
                      unsigned long &sumOfRi, unsigned long &oneLoopIOFuncSize, unsigned long &allIOFuncSize) {
@@ -97,7 +217,8 @@ static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &al
 
     sumOfMiCi += (allDistinctAddr.size() + allIOFuncSize) * (oneLoopDistinctAddr.size() + oneLoopIOFuncSize);
 
-    DEBUG_PRINT(("sumOfMiCi: %lu, Mi: %lu+%lu, Ci: %lu+%lu\n", sumOfMiCi, allDistinctAddr.size(), allIOFuncSize, oneLoopDistinctAddr.size(), oneLoopIOFuncSize));
+    DEBUG_PRINT(
+            ("sumOfMiCi: %lu, Mi: %lu+%lu, Ci: %lu+%lu\n", sumOfMiCi, allDistinctAddr.size(), allIOFuncSize, oneLoopDistinctAddr.size(), oneLoopIOFuncSize));
 
     std::set<unsigned long> intersect;
     std::set_intersection(allDistinctAddr.begin(), allDistinctAddr.end(), oneLoopDistinctAddr.begin(),
@@ -113,7 +234,7 @@ static void calcMiCi(OneLoopRecordTy &oneLoopRecord, std::set<unsigned long> &al
     oneLoopIOFuncSize = 0;
 }
 
-void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile) {
+void parseRecord(char *pcBuffer, const std::map<unsigned, int> &mapIndvarStride, FILE *pDebugFile) {
 
     if (pcBuffer == nullptr) {
         printf("NULL buffer\n");
@@ -121,14 +242,15 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
 
     bool endFlag = false;
 
-    VecIndvarInfoTy vecIndvarInfo;
-
-    std::deque<int> dqInitStride(vecStride.begin(), vecStride.end());
-    std::deque<int> dqStride = dqInitStride;
+//    VecIndvarInfoTy vecIndvarInfo;
+//
+//    std::deque<int> dqInitStride(vecStride.begin(), vecStride.end());
+//    std::deque<int> dqStride = dqInitStride;
 
     struct_stMemRecord record{0UL, 0U, RecordFlag::Terminator};
     // First indvarBegin, first indvarEnd
-    std::deque<struct_stMemRecord> dqIndvarBeginRecord;
+//    std::deque<struct_stMemRecord> dqIndvarBeginRecord;
+    std::map<unsigned, ArrayBeginEnd> mapArrayInfo;
 
     OneLoopRecordTy oneLoopRecord;  // <address, OneLoopRecordFlag>
     std::set<unsigned long> oneLoopDistinctAddr;  // Ci: ith Distinct First Load Address
@@ -142,21 +264,20 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
 
     for (unsigned long i = 0; !endFlag; i += 16UL) {
         memcpy(&record, &pcBuffer[i], sizeof(record));
-        if (pFile) {
-            fprintf(pFile, "%lu, %u, %d\n", record.address, record.length, record.id);
+        if (pDebugFile) {
+            fprintf(pDebugFile, "%lu, %u, %d\n", record.address, record.length, record.id);
         }
 
         RecordFlag flag;
-        if (record.id == 0) {
+        if (record.id == INVALID_ID) {
             flag = RecordFlag::Terminator;
-        }
-        if (record.id == 2147483647) {
+        } else if (record.id == DELIMIT) {
             flag = RecordFlag::Delimiter;
-        }
-        if (record.id > 0) {
+        } else if (collectIndvar(record, mapIndvarStride, mapArrayInfo)) {
+            flag = RecordFlag::LoopFlag;
+        } else if (record.id > 0) {
             flag = RecordFlag::LoadFlag;
-        }
-        if (record.id < 0) {
+        } else if (record.id < 0) {
             flag = RecordFlag::StoreFlag;
         }
 
@@ -167,16 +288,19 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
                     if (record.address != 0UL && record.length == 0U) {
                         auto cost = record.address;
                         DEBUG_PRINT(("cost: %u\n", cost));
-                        parseOneLoop(vecIndvarInfo, oneLoopRecord);
-                        vecIndvarInfo.clear();
+//                        parseOneLoop(vecIndvarInfo, oneLoopRecord);
+//                        vecIndvarInfo.clear();
+                        calcIndvar(mapArrayInfo, oneLoopRecord);
+                        mapArrayInfo.clear();
                         calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi, oneLoopIOFuncSize, allIOFuncSize);
-                        dqStride = dqInitStride;
+//                        dqStride = dqInitStride;
                         if (sumOfRi == 0) {
                             DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, cost=%lu\n", sumOfMiCi, sumOfRi, cost));
                             printf("%u,%lu\n", 0, cost);
                         } else {
-                            DEBUG_PRINT(("sumOfMiCi=%lu, sumOfRi=%lu, N=%lu, cost=%lu\n", sumOfMiCi, sumOfRi, sumOfMiCi /
-                                                                                                             sumOfRi, cost));
+                            DEBUG_PRINT(
+                                    ("sumOfMiCi=%lu, sumOfRi=%lu, N=%lu, cost=%lu\n", sumOfMiCi, sumOfRi, sumOfMiCi /
+                                                                                                          sumOfRi, cost));
                             printf("%lu,%lu\n", sumOfMiCi / sumOfRi, cost);
                         }
                     } else {
@@ -188,10 +312,12 @@ void parseRecord(char *pcBuffer, const std::vector<int> &vecStride, FILE *pFile)
             }
             case RecordFlag::Delimiter: {
                 if (i > 0) {  // skip the first loop (loop begins with delimiter)
-                    parseOneLoop(vecIndvarInfo, oneLoopRecord);
-                    vecIndvarInfo.clear();
+//                    parseOneLoop(vecIndvarInfo, oneLoopRecord);
+//                    vecIndvarInfo.clear();
+                    calcIndvar(mapArrayInfo, oneLoopRecord);
+                    mapArrayInfo.clear();
                     calcMiCi(oneLoopRecord, allDistinctAddr, sumOfMiCi, sumOfRi, oneLoopIOFuncSize, allIOFuncSize);
-                    dqStride = dqInitStride;
+//                    dqStride = dqInitStride;
                 }
                 break;
             }

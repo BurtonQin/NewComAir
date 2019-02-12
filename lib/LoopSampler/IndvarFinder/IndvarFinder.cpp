@@ -24,7 +24,7 @@ static cl::opt<std::string> strFuncName("strFunc",
                                         cl::desc("Function Name"), cl::Optional,
                                         cl::value_desc("strFuncName"));
 
-static const char *outputFilePath = "indvar.info";
+static const char *outputFilePath = "indvar.pre.info";
 
 char IndvarFinder::ID = 0;
 

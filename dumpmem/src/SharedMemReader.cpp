@@ -63,7 +63,7 @@ int closeDebugLogFile(FILE *pFile) {
     return fclose(pFile);
 }
 
-int readStrides(const char *indvarFileName, std::vector<int> &vecStride) {
+int readIndvarStride(const char *indvarFileName, std::map<unsigned, int> &mapIndvarStride) {
 
     std::ifstream infile(indvarFileName);
     if (!infile) {
@@ -71,10 +71,10 @@ int readStrides(const char *indvarFileName, std::vector<int> &vecStride) {
         return errno;
     }
 
-    std::string indvarName;
+    unsigned uID;
     int stride;
-    while (infile >> indvarName >> stride) {
-        vecStride.push_back(stride);
+    while (infile >> uID >> stride) {
+        mapIndvarStride[uID] = stride;
     }
 
     infile.close();
@@ -100,20 +100,21 @@ int main(int argc, char *argv[]) {
     char *pcBuffer = nullptr;
     auto err = openSharedMem(sharedMemName, fd, pcBuffer);
     if (err != 0) {
-//        return err;
+        return err;
     }
-    std::vector<int> vecStride;
-//    err = readStrides(indvarInfoPath, vecStride);
-//    if (err != 0) {
-//        return err;
-//    }
+    std::map<unsigned, int> mapIndvarStride;
+    err = readIndvarStride(indvarInfoPath, mapIndvarStride);
+    if (err != 0) {
+        return err;
+    }
 //#ifdef DEBUG
     FILE *pFile;
     openDebugLogFile(sharedMemName, pFile);
 //#endif
 
 //#ifdef DEBUG
-    parseRecord(pcBuffer, vecStride, pFile);
+//    parseRecord(pcBuffer, vecStride, pFile);
+    parseRecord(pcBuffer, mapIndvarStride, pFile);
 //#else
 //    parseRecord(pcBuffer, vecStride, nullptr);
 //#endif

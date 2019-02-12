@@ -48,7 +48,7 @@ def get_command(*params):
 # set input_file size
 def get_input_num_range():
 
-    inputs = [i for i in range(500, 5500, 500)]
+    inputs = [i for i in range(500, 10500, 500)]
     sizes = inputs
 
     return sizes, inputs
