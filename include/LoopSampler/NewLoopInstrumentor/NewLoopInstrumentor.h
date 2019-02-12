@@ -22,7 +22,11 @@ struct IndvarInstIDStride {
     int stride;
 };
 
-typedef std::vector<IndvarInstIDStride> VecIndvarInstIDStrideTy;
+enum class LOOP_TYPE {
+    OTHERS = 0,
+    ARRAY = 1,
+    LINKEDLIST = 2
+};
 
 struct NewLoopInstrumentor : public ModulePass {
 
@@ -50,13 +54,23 @@ private:
     void SetupFunctions();
 
     // Search and optimize R/W Insts
-    bool isArrayList(Loop *pLoop, MonitoredRWInsts &MI);
+    LOOP_TYPE getArrayListInsts(Loop *pLoop, MonitoredRWInsts &MI);
 
     void getMonitoredRWInsts(const std::set<BasicBlock *> &setBB, MonitoredRWInsts &MI);
 
     void getAliasInstInfo(std::unique_ptr<AliasSetTracker> CurAST, const MonitoredRWInsts &MI, vector<set<Instruction *>> &vecAI);
 
     void removeByDomInfo(DominatorTree &DT, vector<set<Instruction *>> &vecAI, MonitoredRWInsts &MI);
+
+    void getInstsToBeHoisted(Loop *pLoop, AliasAnalysis &AA, MonitoredRWInsts &inplaceMI, MonitoredRWInsts &hoistMI);
+
+    bool readIndvarStride(const char *filePath, std::vector<IndvarInstIDStride> &vecIndvarInstIDStride);
+
+    bool cloneDependantInstsToPreHeader(Loop *pLoop, Instruction *pInst, Instruction *termOfPreheader, ValueToValueMapTy &VMap);
+
+    bool sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, ValueToValueMapTy &VMap);
+
+    void insertBeforeExitLoop();
 
     // Clone and re-structure
     bool CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee, ValueToValueMapTy &originClonedMapping);
@@ -80,6 +94,8 @@ private:
 
     // Instrument
     void InstrumentMonitoredInsts(MonitoredRWInsts &MI);
+
+    void HoistOrSinkMonitoredInsts(MonitoredRWInsts &MI, Instruction *InsertBefore);
 
     void InstrumentCallees(std::set<Function *> setOriginFunc, ValueToValueMapTy &originClonedMapping);
 

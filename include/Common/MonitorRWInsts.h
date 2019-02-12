@@ -32,10 +32,12 @@ struct MonitoredRWInsts {
     map<Instruction *, unsigned> mapFreadID;
     map<Instruction *, unsigned> mapOstreamID;
 
+    bool empty();
     bool add(Instruction *pInst);
     void clear();
     void print(llvm::raw_ostream& os);
     void dump();
+    void diff(MonitoredRWInsts &rhs);
 };
 
 int mapFromOriginToCloned(ValueToValueMapTy &originClonedMapping, MonitoredRWInsts &origin, MonitoredRWInsts &cloned);

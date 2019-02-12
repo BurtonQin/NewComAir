@@ -214,7 +214,8 @@ bool MonitoredRWInsts::add(Instruction *pInst) {
             } else if (funcName == "fread") {
                 mapFreadID[pInst] = instID;
                 return true;
-            } else if (funcName == "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostreamIT_T0_ES7_RKNSt7__cxx1112basic_stringIS4_S5_T1_EE") {
+            } else if (funcName ==
+                       "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostreamIT_T0_ES7_RKNSt7__cxx1112basic_stringIS4_S5_T1_EE") {
                 mapOstreamID[pInst] = instID;
                 return true;
             }
@@ -262,4 +263,34 @@ void MonitoredRWInsts::print(llvm::raw_ostream &os) {
 void MonitoredRWInsts::dump() {
 
     print(errs());
+}
+
+void MonitoredRWInsts::diff(MonitoredRWInsts &rhs) {
+
+    for (auto &kv : rhs.mapLoadID) {
+        mapLoadID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapStoreID) {
+        mapStoreID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapMemSetID) {
+        mapMemSetID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapMemTransferID) {
+        mapMemTransferID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapFgetcID) {
+        mapFgetcID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapFreadID) {
+        mapFreadID.erase(kv.first);
+    }
+    for (auto &kv : rhs.mapOstreamID) {
+        mapOstreamID.erase(kv.first);
+    }
+}
+
+bool MonitoredRWInsts::empty() {
+    return mapLoadID.empty() && mapStoreID.empty() && mapMemSetID.empty() && mapMemTransferID.empty() &&
+           mapFgetcID.empty() && mapFreadID.empty() && mapOstreamID.empty();
 }

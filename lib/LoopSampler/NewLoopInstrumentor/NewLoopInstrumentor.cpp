@@ -62,14 +62,22 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
     SetupInit(M);
 	
-    /*
     std::error_code EC;
-    llvm::raw_fd_ostream outFile("inst_type_id.txt", EC, llvm::sys::fs::F_Text);
-    if (outFile.has_error()) {
-        errs() << "Cannot open inst_type_id.txt\n";
+    llvm::raw_fd_ostream outFileInplace("inst_type_id_inplace.txt", EC, llvm::sys::fs::F_Text);
+    if (outFileInplace.has_error()) {
+        errs() << "Cannot open inst_type_id_inplace.txt\n";
         return false;
     }
-    */
+    llvm::raw_fd_ostream outFileHoist("inst_type_id_hoist.txt", EC, llvm::sys::fs::F_Text);
+    if (outFileHoist.has_error()) {
+        errs() << "Cannot open inst_type_id_hoist.txt\n";
+        return false;
+    }
+//    llvm::raw_fd_ostream outFileHoistSink("inst_type_id_hoistsink.txt", EC, llvm::sys::fs::F_Text);
+//    if (outFileHoistSink.has_error()) {
+//        errs() << "Cannot open inst_type_id_hoistsink.txt\n";
+//        return false;
+//    }
 
     Function *pFunction = searchFunctionByName(M, strFileName, strFuncName, uSrcLine);
     if (!pFunction) {
@@ -89,9 +97,6 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         return false;
     }
 
-  
-
-   
     set<BasicBlock *> setBlocksInLoop;
     for (BasicBlock *BB : pLoop->blocks()) {
         setBlocksInLoop.insert(BB);
@@ -104,7 +109,6 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
     InstrumentCallees(setCallees, originClonedMapping);
 
-    // Instrument Callees: OK
     set<Function *> setClonedCallees;
     for (Function *pFunc : setCallees) {
         auto it = originClonedMapping.find(pFunc);
@@ -117,90 +121,159 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     }
 
     // Search monitored
-    
-    MonitoredRWInsts MI;
-  
-    /*
-    if (isArrayList(pLoop, MI) && !MI.mapLoadID.empty()) {
-        DEBUG(MI.dump());
+    MonitoredRWInsts inplaceMI;
+    MonitoredRWInsts hoistMI;
+//    MonitoredRWInsts hoistSinkMI;
+
+    LOOP_TYPE loopType = getArrayListInsts(pLoop, inplaceMI);
+    if (loopType == LOOP_TYPE::ARRAY && !inplaceMI.mapLoadID.empty()) {
+
+//        vector<IndvarInstIDStride> vecIndvarInstIDStride;
+//        if (readIndvarStride("indvar.info", vecIndvarInstIDStride)) {
+//            for (auto &kv : inplaceMI.mapLoadID) {
+//                LoadInst *pLoad = kv.first;
+//                unsigned uID = kv.second;
+//                for (auto &v : vecIndvarInstIDStride) {
+//                    if (v.indvarInstID == uID) {
+//                        hoistSinkMI.mapLoadID[pLoad] = uID;
+//                        inplaceMI.mapLoadID.erase(pLoad);
+//                    }
+//                }
+//            }
+//        }
+        DEBUG(dbgs() << "Inplace:\n");
+        DEBUG(inplaceMI.dump());
+        DEBUG(dbgs() << "Hoist:\n");
+        DEBUG(hoistMI.dump());
+//        DEBUG(dbgs() << "HoistSink:\n");
+//        DEBUG(hoistSinkMI.dump());
+        inplaceMI.print(outFileInplace);
+        hoistMI.print(outFileHoist);
+//        hoistSinkMI.print(outFileHoistSink);
+
+    } else if (loopType == LOOP_TYPE::LINKEDLIST && !inplaceMI.mapLoadID.empty()) {
+
+        DEBUG(dbgs() << "Inplace:\n");
+        DEBUG(inplaceMI.dump());
+        DEBUG(dbgs() << "Hoist:\n");
+        DEBUG(hoistMI.dump());
+//        DEBUG(dbgs() << "HoistSink:\n");
+//        DEBUG(hoistSinkMI.dump());
+        inplaceMI.print(outFileInplace);
+        hoistMI.print(outFileHoist);
+//        hoistSinkMI.print(outFileHoistSink);
+
     } else {
 
-        getMonitoredRWInsts(setBlocksInLoop, MI);
+        getMonitoredRWInsts(setBlocksInLoop, inplaceMI);
 
         vector<set<Instruction *>> vecAI;
-        getAliasInstInfo(std::move(CurAST), MI, vecAI);
-        removeByDomInfo(DT, vecAI, MI);
+        getAliasInstInfo(std::move(CurAST), inplaceMI, vecAI);
+        removeByDomInfo(DT, vecAI, inplaceMI);
+        getInstsToBeHoisted(pLoop, AA, inplaceMI, hoistMI);
 
-        DEBUG(MI.dump());
+        DEBUG(dbgs() << "Inplace:\n");
+        DEBUG(inplaceMI.dump());
+        DEBUG(dbgs() << "Hoist:\n");
+        DEBUG(hoistMI.dump());
+//        DEBUG(dbgs() << "HoistSink:\n");
+//        DEBUG(hoistSinkMI.dump());
+        inplaceMI.print(outFileInplace);
+        hoistMI.print(outFileHoist);
+//        hoistSinkMI.print(outFileHoistSink);
+
     }
-
-    MI.print(outFile);
-    */
 
     std::vector<BasicBlock *> vecAdded;
     CreateIfElseBlock(pLoop, vecAdded);
 
-    //InlineNumGlobalCost(pLoop);
-
     vector<BasicBlock *> vecCloned;
     CloneInnerLoop(pLoop, vecAdded, originClonedMapping, vecCloned);
 
-
-   
-    //pFunction->dump();
-
-    MonitoredRWInsts clonedMI;
-    mapFromOriginToCloned(originClonedMapping, MI, clonedMI);
-
     // The preheader: ClonedBody
     BasicBlock *pClonedBody = vecAdded[2];
-    Instruction *hoistLoc = &*pClonedBody->getFirstInsertionPt();
 
+    if (!inplaceMI.empty()) {
+        MonitoredRWInsts inplaceClonedMI;
+        mapFromOriginToCloned(originClonedMapping, inplaceMI, inplaceClonedMI);
+        InstrumentMonitoredInsts(inplaceClonedMI);
+    }
 
-//    assert(vecCloned.size()  == 3);
-   
-//    pFunction->dump();
-    /*
-    InstrumentMonitoredInsts(clonedMI);
+    if (!hoistMI.empty()) {
+        Instruction *hoistLoc = &*pClonedBody->getFirstInsertionPt();
+        MonitoredRWInsts hoistClonedMI;
+        mapFromOriginToCloned(originClonedMapping, hoistMI, hoistClonedMI);
+        HoistOrSinkMonitoredInsts(hoistClonedMI, hoistLoc);
+    }
 
-    Instruction *delimitLoc = &*pClonedBody->getFirstInsertionPt();
-    InlineHookDelimit(delimitLoc);
+//    if (!hoistSinkMI.empty()) {
+//        Instruction *hoistLoc = &*pClonedBody->getTerminator();
+//        for (auto &kv : hoistSinkMI.mapLoadID) {
+//            LoadInst *pLoad = kv.first;
+//            bool ok = cloneDependantInstsToPreHeader(pLoop, pLoad, hoistLoc, originClonedMapping);
+//            assert(ok);
+//            ok = sinkInstsToLoopExit(pLoop, pLoad, originClonedMapping);
+//            assert(ok);
+//        }
+//
+//        pFunction->dump();
+//    }
 
-
-
-*/
     set<BasicBlock *> setBBInClonedLoop;
     for (BasicBlock *BB : setBlocksInLoop) {
-        BasicBlock *clonedBB = cast<BasicBlock>(originClonedMapping[BB]);
-        errs() << clonedBB->getName() << "\n";
-        setBBInClonedLoop.insert(clonedBB);
+        auto it = originClonedMapping.find(BB);
+        if (it != originClonedMapping.end()) {
+            BasicBlock *clonedBB = cast<BasicBlock>(it->second);
+            setBBInClonedLoop.insert(clonedBB);
+        }
     }
 
     InlineGlobalCostForLoop(setBBInClonedLoop);
 
-    InstrumentMain("main");
+    Instruction *delimitLoc = &*pClonedBody->getFirstInsertionPt();
+    InlineHookDelimit(delimitLoc);
 
+    InstrumentMain("main");
 
     return true;
 }
 
+bool NewLoopInstrumentor::readIndvarStride(const char *filePath, std::vector<IndvarInstIDStride> &vecIndvarInstIDStride) {
 
-bool NewLoopInstrumentor::isArrayList(Loop *pLoop, MonitoredRWInsts &MI) {
+    std::ifstream infile(filePath);
 
-    bool retval = false;
+    if (!infile.is_open()) {
+        return false;
+    }
+
+    unsigned indvarInstID;
+    int stride;
+
+    while (infile >> indvarInstID >> stride) {
+        vecIndvarInstIDStride.push_back(IndvarInstIDStride{indvarInstID, stride});
+    }
+
+    return !vecIndvarInstIDStride.empty();
+}
+
+LOOP_TYPE NewLoopInstrumentor::getArrayListInsts(Loop *pLoop, MonitoredRWInsts &MI) {
+
+    LOOP_TYPE loopType;
     set<Value *> setArrayListValue;
     if (isArrayAccessLoop(pLoop, setArrayListValue)) {
         errs() << "Loop is ArrayAccessLoop\n";
-        retval = true;
+        loopType = LOOP_TYPE::ARRAY;
     } else if (isArrayAccessLoop1(pLoop, setArrayListValue)) {
         errs() << "Loop is ArrayAccessLoop1\n";
-        retval = true;
+        loopType = LOOP_TYPE::ARRAY;
     } else if (isLinkedListAccessLoop(pLoop, setArrayListValue)) {
         errs() << "Loop is LinkedListAccessLoop\n";
-        retval = true;
+        loopType = LOOP_TYPE::LINKEDLIST;
+    } else {
+        loopType = LOOP_TYPE::OTHERS;
     }
 
-    if (retval) {
+    if (loopType != LOOP_TYPE::OTHERS) {
         for (Value *pVal : setArrayListValue) {
             if (Instruction *pInst = dyn_cast<Instruction>(pVal)) {
                 errs() << "ArrayList Insts: " << *pInst << '\n';
@@ -211,7 +284,7 @@ bool NewLoopInstrumentor::isArrayList(Loop *pLoop, MonitoredRWInsts &MI) {
         }
     }
 
-    return retval;
+    return loopType;
 }
 
 void NewLoopInstrumentor::getMonitoredRWInsts(const std::set<BasicBlock *> &setBB, MonitoredRWInsts &MI) {
@@ -1001,6 +1074,51 @@ void NewLoopInstrumentor::InstrumentMonitoredInsts(MonitoredRWInsts &MI) {
     }
 }
 
+void NewLoopInstrumentor::HoistOrSinkMonitoredInsts(MonitoredRWInsts &MI, Instruction *InsertBefore) {
+
+    for (auto &kv : MI.mapLoadID) {
+        LoadInst *pLoad = kv.first;
+        unsigned uID = kv.second;
+        InlineHookLoad(pLoad, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapStoreID) {
+        StoreInst *pStore = kv.first;
+        unsigned uID = kv.second;
+        InlineHookStore(pStore, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapMemSetID) {
+        MemSetInst *pMemSet = kv.first;
+        unsigned uID = kv.second;
+        InlineHookMemSet(pMemSet, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapMemTransferID) {
+        MemTransferInst *pMemTransfer = kv.first;
+        unsigned uID = kv.second;
+        InlineHookMemTransfer(pMemTransfer, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapFgetcID) {
+        Instruction *pCall = kv.first;
+        unsigned uID = kv.second;
+        InlineHookFgetc(pCall, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapFreadID) {
+        Instruction *pCall = kv.first;
+        unsigned uID = kv.second;
+        InlineHookFread(pCall, uID, InsertBefore);
+    }
+
+    for (auto &kv : MI.mapOstreamID) {
+        Instruction *pCall = kv.first;
+        unsigned uID = kv.second;
+        InlineHookOstream(pCall, uID, InsertBefore);
+    }
+}
+
 void NewLoopInstrumentor::InstrumentCallees(std::set<Function *> setOriginFunc, ValueToValueMapTy &originClonedMapping) {
 
     MonitoredRWInsts MI;
@@ -1523,5 +1641,213 @@ void NewLoopInstrumentor::RemapInstruction(Instruction *I, ValueToValueMapTy &VM
     }
 }
 
+void NewLoopInstrumentor::getInstsToBeHoisted(Loop *pLoop, AliasAnalysis &AA, MonitoredRWInsts &inplaceMI,
+                                              MonitoredRWInsts &hoistMI) {
 
+    assert(pLoop);
+
+    for (auto &kv : inplaceMI.mapLoadID) {
+        LoadInst *pLoad = kv.first;
+        unsigned uID = kv.second;
+        if (pLoop->isLoopInvariant(pLoad->getOperand(0))) {
+            hoistMI.mapLoadID[pLoad] = uID;
+        }
+    }
+
+    for (auto &kv : inplaceMI.mapStoreID) {
+        StoreInst *pStore = kv.first;
+        unsigned uID = kv.second;
+        if (pLoop->isLoopInvariant(pStore->getOperand(1))) {
+            hoistMI.mapStoreID[pStore] = uID;
+        }
+    }
+
+    // After Alias+Dominance checking and removing,
+    // if operands of a LoadInst and a StoreInst are still Alias/equal,
+    // then their sequence is unknown, thus should not be hoisted.
+    for (auto &kvLoad : hoistMI.mapLoadID) {
+        LoadInst *pLoad = kvLoad.first;
+        for (auto &kvStore : hoistMI.mapStoreID) {
+            StoreInst *pStore = kvStore.first;
+            if (AA.isMustAlias(pLoad, pStore)) {
+                hoistMI.mapLoadID.erase(pLoad);
+                hoistMI.mapStoreID.erase(pStore);
+            }
+        }
+    }
+
+    inplaceMI.diff(hoistMI);
+
+    // TODO: mem and IO wait to be verified
+}
+
+bool NewLoopInstrumentor::cloneDependantInstsToPreHeader(Loop *pLoop, Instruction *pInst, Instruction *termOfPreheader, ValueToValueMapTy &VMap) {
+
+//    errs() << pLoop->contains(pInst) << ":\n";
+//    pInst->dump();
+//
+//    vector<Instruction *> workList;
+//
+//    unsigned opNum = pInst->getNumOperands();
+//    for (unsigned i = 0; i < opNum; ++i) {
+//        Value *value = pInst->getOperand(i);
+//        value->dump();
+//        if (Instruction *pNextInst = dyn_cast<Instruction>(value)) {
+//            errs() << "is Inst\n";
+//            errs() << pLoop->contains(pNextInst) << "\n";
+//            workList.push_back(pNextInst);
+//        }
+//        errs() << "is not Inst\n";
+//        errs() << "\n";
+//    }
+//
+//    vector<Instruction *> workList2;
+//    for (Instruction *pNextInst : workList) {
+//        unsigned opNum = pNextInst->getNumOperands();
+//        for (unsigned i = 0; i < opNum; ++i) {
+//            Value *value = pNextInst->getOperand(i);
+//            value->dump();
+//            if (Instruction *pNextInst2 = dyn_cast<Instruction>(value)) {
+//                errs() << "is Inst\n";
+//                errs() << pLoop->contains(pNextInst2) << "\n";
+//                workList2.push_back(pNextInst2);
+//            }
+//            errs() << "is not Inst\n";
+//            errs() << "\n";
+//        }
+//    }
+//
+//    vector<Instruction *> workList3;
+//    for (Instruction *pNextInst : workList2) {
+//        unsigned opNum = pNextInst->getNumOperands();
+//        for (unsigned i = 0; i < opNum; ++i) {
+//            Value *value = pNextInst->getOperand(i);
+//            value->dump();
+//            if (Instruction *pNextInst2 = dyn_cast<Instruction>(value)) {
+//                errs() << "is Inst\n";
+//                errs() << pLoop->contains(pNextInst2) << "\n";
+//                workList3.push_back(pNextInst2);
+//            }
+//            errs() << "is not Inst\n";
+//            errs() << "\n";
+//        }
+//    }
+
+
+    vector<Instruction *> toClone;
+    vector<Instruction *> workList;
+
+    workList.push_back(pInst);
+    toClone.push_back(pInst);
+    while (!workList.empty()) {
+        Instruction *pCurrInst = workList.back();
+        workList.pop_back();
+        unsigned opNum = pCurrInst->getNumOperands();
+        for (unsigned i = 0; i < opNum; ++i) {
+            if (Value *value = pCurrInst->getOperand(i)) {
+                if (Instruction *pNextInst = dyn_cast<Instruction>(value)) {
+                    if (pLoop->contains(pNextInst)) {
+                        toClone.push_back(pNextInst);
+                        workList.push_back(pNextInst);
+                    }
+                }
+            }
+        }
+    }
+
+    vector<Instruction *> clonedToClone;
+    for (Instruction *pOrigin : toClone) {
+        auto it = VMap.find(pOrigin);
+        if (it != VMap.end()) {
+            if (Instruction *pCloned = cast<Instruction>(it->second)) {
+                pCloned->dump();
+                clonedToClone.push_back(pCloned);
+            }
+        }
+    }
+
+    vector<Instruction *> cloned;
+    // Reverse: seq: first pInst, insert: last pInst
+    for (auto rit = clonedToClone.rbegin(); rit != clonedToClone.rend(); ++rit) {
+        Instruction *pInstToClone = *rit;
+        Instruction *pClonedInst = pInstToClone->clone();
+        if (pClonedInst->getName() != "") {
+            pClonedInst->setName(pClonedInst->getName() + ".Hoist");
+        }
+        VMap[pInstToClone] = pClonedInst;
+        cloned.push_back(pClonedInst);
+        pClonedInst->insertBefore(termOfPreheader);
+    }
+
+    for (Instruction *pClonedInst : cloned) {
+        if (pClonedInst) {
+            RemapInstruction(pClonedInst, VMap);
+        }
+    }
+
+    unsigned uID = GetInstructionID(pInst);
+    assert(uID != INVALID_ID && MIN_ID <= uID && uID <= MAX_ID);
+    // the cloned loop
+    auto it = VMap.find(pInst);
+    if (it == VMap.end()) {
+        return false;
+    }
+    // the cloned Insts in preheader
+    auto it2 = VMap.find(it->second);
+    if (it2 == VMap.end()) {
+        return false;
+    }
+
+    if (LoadInst *pClonedLoad = dyn_cast<LoadInst>(it2->second)) {
+        InlineHookLoad(pClonedLoad, uID, pClonedLoad);
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool NewLoopInstrumentor::sinkInstsToLoopExit(Loop *pLoop, Instruction *pInst, ValueToValueMapTy &VMap) {
+
+//    SmallVector<BasicBlock *, 4> vecExitBlocks;
+//    pLoop->getExitBlocks(vecExitBlocks);
+//    SmallSet<BasicBlock *, 4> setClonedExitBlocks;
+//    for (BasicBlock *BB : vecExitBlocks) {
+//        auto itBB = VMap.find(BB);
+//        if (itBB != VMap.end()) {
+//            BasicBlock *clonedBB = dyn_cast<BasicBlock>(itBB->second);
+//            if (clonedBB) {
+//                setClonedExitBlocks.insert(clonedBB);
+//            }
+//        }
+//    }
+//    SmallVector<Loop::Edge, 4> vecExitEdge;
+//    pLoop->getExitEdges(vecExitEdge);
+//
+//    SmallSet<BasicBlock *, 4> setPreExitBlock;
+//    for (const auto &edge : vecExitEdge) {
+//        BasicBlock *PreExit = const_cast<BasicBlock *>(edge.first);
+//        setPreExitBlock.insert(PreExit);
+//    }
+//
+//    unsigned uID = GetInstructionID(pInst);
+//    assert(uID != INVALID_ID && MIN_ID <= uID && uID <= MAX_ID);
+//
+//    auto it = VMap.find(pInst);
+//    if (it == VMap.end()) {
+//        return false;
+//    }
+//    LoadInst *pClonedLoad = dyn_cast<LoadInst>(it->second);
+//    if (!pClonedLoad) {
+//        return false;
+//    }
+//
+//    for (BasicBlock *BB : setPreExitBlock) {
+//        errs() << BB->getName() << "\n";
+//        Instruction *InsertBefore = BB->getTerminator();
+//        InsertBefore->dump();
+//        InlineHookLoad(pClonedLoad, uID, InsertBefore);
+//    }
+
+    return true;
+}
 
