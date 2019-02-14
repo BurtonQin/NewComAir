@@ -24,6 +24,8 @@ SRC_FILE=${BUG_DIR}apache37184.c
 #BC_FILE=${BUG_DIR}target.bc
 LINENO=65
 FUNCNAME=fireMessageLoggedEvent
+#LINENO=38
+#FUNCNAME=CreateLinster
 # Sample once or twice consecutively
 BELSEIF=
 #BELSEIF=-bElseIf

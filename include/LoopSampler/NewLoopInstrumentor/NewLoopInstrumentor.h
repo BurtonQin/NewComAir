@@ -74,7 +74,7 @@ private:
                               map<BasicBlock *, BasicBlock *> &mapExit2Inter);
 
     // Clone and re-structure
-    bool CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee, ValueToValueMapTy &originClonedMapping);
+    bool CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee, ValueToValueMapTy &originClonedMapping, std::map<Function *, std::set<Instruction *>> &funcCallSiteMapping);
 
     void FindCalleesInDepth(const std::set<BasicBlock *> &setBB, std::set<Function *> &setToDo,
                             std::map<Function *, std::set<Instruction *>> &funcCallSiteMapping);

@@ -24,6 +24,8 @@ SRC_FILE=${BUG_DIR}Telnet.c
 #BC_FILE=${BUG_DIR}target.bc
 LINENO=103
 FUNCNAME=indexOf
+#LINENO=109
+#FUNCNAME=indexOf
 # Sample once or twice consecutively
 BELSEIF=
 #BELSEIF=-bElseIf

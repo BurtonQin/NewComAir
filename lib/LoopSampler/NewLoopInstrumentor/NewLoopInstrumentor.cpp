@@ -40,6 +40,14 @@ static cl::opt<std::string> strFuncName("strFunc",
                                         cl::desc("Function Name"), cl::Optional,
                                         cl::value_desc("strFuncName"));
 
+static cl::opt<bool> bArrayListOpt("bArrayListOpt",
+                                   cl::desc("Enable Array List Optimization"), cl::Optional,
+                                   cl::value_desc("bArrayListOpt"), cl::init(false));
+
+static cl::opt<bool> bLoopInvarOpt("bStop",
+                                   cl::desc("Enable LoopInvar Optimization"), cl::Optional,
+                                   cl::value_desc("bLoopInvarOpt"), cl::init(false));
+
 char NewLoopInstrumentor::ID = 0;
 
 NewLoopInstrumentor::NewLoopInstrumentor() : ModulePass(ID) {
@@ -107,17 +115,25 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         setBlocksInLoop.insert(BB);
     }
 
+    vector<Function *> vecWorkList;
+    set<Function *> setDirectFuncs;
+    std::map<Function *, std::set<Instruction *>> directFuncCallSiteMapping;
+
+    FindDirectCallees(setBlocksInLoop, vecWorkList, setDirectFuncs, directFuncCallSiteMapping);
+
     // Callee functions
     set<Function *> setCallees;
-    ValueToValueMapTy originClonedMapping;
-    CloneRemapCallees(setBlocksInLoop, setCallees, originClonedMapping);
+    ValueToValueMapTy VCalleeMap;
+    std::map<Function *, std::set<Instruction *>> funcCallSiteMapping;
+    bool ok = CloneRemapCallees(setBlocksInLoop, setCallees, VCalleeMap, funcCallSiteMapping);
+    assert(ok);
 
-    InstrumentCallees(setCallees, originClonedMapping);
+    InstrumentCallees(setCallees, VCalleeMap);
 
     set<Function *> setClonedCallees;
     for (Function *pFunc : setCallees) {
-        auto it = originClonedMapping.find(pFunc);
-        if (it != originClonedMapping.end()) {
+        auto it = VCalleeMap.find(pFunc);
+        if (it != VCalleeMap.end()) {
             Function *pClonedFunc = cast<Function>(it->second);
             if (pClonedFunc) {
                 InlineGlobalCostForCallee(pClonedFunc);
@@ -130,8 +146,11 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
     MonitoredRWInsts hoistMI;
     MonitoredRWInsts hoistSinkMI;
 
-    LOOP_TYPE loopType = getArrayListInsts(pLoop, inplaceMI);
-    if (loopType == LOOP_TYPE::ARRAY && !inplaceMI.mapLoadID.empty()) {
+    LOOP_TYPE loopType;
+    if (bArrayListOpt) {
+        loopType = getArrayListInsts(pLoop, inplaceMI);
+    }
+    if (bArrayListOpt && loopType == LOOP_TYPE::ARRAY && !inplaceMI.mapLoadID.empty()) {
 
         vector<IndvarInstIDStride> vecIndvarInstIDStride;
         if (readIndvarStride("indvar.pre.info", vecIndvarInstIDStride)) {
@@ -157,7 +176,7 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
         hoistMI.print(outFileHoist);
         hoistSinkMI.print(outFileHoistSink);
 
-    } else if (loopType == LOOP_TYPE::LINKEDLIST && !inplaceMI.mapLoadID.empty()) {
+    } else if (bArrayListOpt && loopType == LOOP_TYPE::LINKEDLIST && !inplaceMI.mapLoadID.empty()) {
 
         DEBUG(dbgs() << "Inplace:\n");
         DEBUG(inplaceMI.dump());
@@ -173,10 +192,12 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
         getMonitoredRWInsts(setBlocksInLoop, inplaceMI);
 
-        vector<set<Instruction *>> vecAI;
-        getAliasInstInfo(std::move(CurAST), inplaceMI, vecAI);
-        removeByDomInfo(DT, vecAI, inplaceMI);
-        getInstsToBeHoisted(pLoop, AA, inplaceMI, hoistMI);
+        if (bLoopInvarOpt) {
+            vector<set<Instruction *>> vecAI;
+            getAliasInstInfo(std::move(CurAST), inplaceMI, vecAI);
+            removeByDomInfo(DT, vecAI, inplaceMI);
+            getInstsToBeHoisted(pLoop, AA, inplaceMI, hoistMI);
+        }
 
         DEBUG(dbgs() << "Inplace:\n");
         DEBUG(inplaceMI.dump());
@@ -192,6 +213,16 @@ bool NewLoopInstrumentor::runOnModule(Module &M) {
 
     std::vector<BasicBlock *> vecAdded;
     CreateIfElseBlock(pLoop, vecAdded);
+
+    ValueToValueMapTy originClonedMapping;
+
+    for (Function *pFunc : setDirectFuncs) {
+        Function *clonedFunc = dyn_cast<Function>(VCalleeMap[pFunc]);
+        if (clonedFunc) {
+            errs() << clonedFunc->getName() << "\n";
+            originClonedMapping[pFunc] = clonedFunc;
+        }
+    }
 
     vector<BasicBlock *> vecCloned;
     CloneInnerLoop(pLoop, vecAdded, originClonedMapping, vecCloned);
@@ -311,16 +342,16 @@ LOOP_TYPE NewLoopInstrumentor::getArrayListInsts(Loop *pLoop, MonitoredRWInsts &
         loopType = LOOP_TYPE::OTHERS;
     }
 
-    if (loopType != LOOP_TYPE::OTHERS) {
-        for (Value *pVal : setArrayListValue) {
-            if (Instruction *pInst = dyn_cast<Instruction>(pVal)) {
-                errs() << "ArrayList Insts: " << *pInst << '\n';
-                MI.add(pInst);
-            } else {
-                errs() << "ArrayList not Insts: " << *pVal << '\n';
-            }
-        }
-    }
+//    if (loopType != LOOP_TYPE::OTHERS) {
+//        for (Value *pVal : setArrayListValue) {
+//            if (Instruction *pInst = dyn_cast<Instruction>(pVal)) {
+//                errs() << "ArrayList Insts: " << *pInst << '\n';
+//                MI.add(pInst);
+//            } else {
+//                errs() << "ArrayList not Insts: " << *pVal << '\n';
+//            }
+//        }
+//    }
 
     return loopType;
 }
@@ -369,12 +400,12 @@ void NewLoopInstrumentor::getAliasInstInfo(std::unique_ptr<AliasSetTracker> CurA
         }
     }
 
-    if (!setAllLoadStore.empty()) {
-        errs() << "Not All Load/Store Insts are in AliasSet\n";
-        for (Instruction *pInst : setAllLoadStore) {
-            pInst->dump();
-        }
-    }
+//    if (!setAllLoadStore.empty()) {
+//        errs() << "Not All Load/Store Insts are in AliasSet\n";
+//        for (Instruction *pInst : setAllLoadStore) {
+//            pInst->dump();
+//        }
+//    }
 }
 
 void NewLoopInstrumentor::removeByDomInfo(DominatorTree &DT, vector<set<Instruction *>> &vecAI, MonitoredRWInsts &MI) {
@@ -844,16 +875,15 @@ void NewLoopInstrumentor::SetupFunctions() {
 }
 
 bool NewLoopInstrumentor::CloneRemapCallees(const std::set<BasicBlock *> &setBB, std::set<Function *> &setCallee,
-                                            ValueToValueMapTy &originClonedMapping) {
+                                            ValueToValueMapTy &originClonedMapping, std::map<Function *, std::set<Instruction *>> &funcCallSiteMapping) {
 
-    std::map<Function *, std::set<Instruction *>> funcCallSiteMapping;
     FindCalleesInDepth(setBB, setCallee, funcCallSiteMapping);
 
-    errs() << "# of Functions to be cloned: " << setCallee.size() << "\n";
+    DEBUG(dbgs() << "# of Functions to be cloned: " << setCallee.size() << "\n");
 
     CloneFunctions(setCallee, originClonedMapping);
 
-    errs() << "# of Functions cloned: " << funcCallSiteMapping.size() << "\n";
+    DEBUG(dbgs() << "# of Functions cloned: " << funcCallSiteMapping.size() << "\n");
 
     return RemapFunctionCalls(setCallee, funcCallSiteMapping, originClonedMapping);
 }
@@ -871,6 +901,15 @@ void NewLoopInstrumentor::FindDirectCallees(const std::set<BasicBlock *> &setBB,
             Instruction *pInst = &II;
 
             if (Function *pCalled = getCalleeFunc(pInst)) {
+                if (pCalled->getName() == "JS_Assert") {
+                    continue;
+                }
+                if (pCalled->begin() == pCalled->end()) {
+                    continue;
+                }
+                if (pCalled->getSection().str() == ".text.startup") {
+                    continue;
+                }
                 if (!pCalled->isDeclaration()) {
                     funcCallSiteMapping[pCalled].insert(pInst);
 
@@ -910,6 +949,7 @@ void NewLoopInstrumentor::FindCalleesInDepth(const std::set<BasicBlock *> &setBB
 void NewLoopInstrumentor::CloneFunctions(std::set<Function *> &setFunc, ValueToValueMapTy &originClonedMapping) {
 
     for (Function *pOriginFunc : setFunc) {
+        DEBUG(dbgs() << pOriginFunc->getName() << "\n");
         errs() << pOriginFunc->getName() << "\n";
         Function *pClonedFunc = CloneFunction(pOriginFunc, originClonedMapping, nullptr);
         pClonedFunc->setName(pOriginFunc->getName() + ".CPI");
@@ -1433,6 +1473,134 @@ void NewLoopInstrumentor::CreateIfElseIfBlock(Loop *pInnerLoop, vector<BasicBloc
     vecAdded.push_back(pElseIfBody);
     vecAdded.push_back(pElseBody);
 }
+
+//void NewLoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
+//                                      vector<BasicBlock *> &vecCloned) {
+//
+//    Function *pFunction = pLoop->getHeader()->getParent();
+//
+//    SmallVector<BasicBlock *, 4> ExitBlocks;
+//    pLoop->getExitBlocks(ExitBlocks);
+//
+//    for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
+//        VMap[ExitBlocks[i]] = ExitBlocks[i];
+//    }
+//
+//    vector<BasicBlock *> ToClone;
+//    vector<BasicBlock *> BeenCloned;
+//
+//    set<BasicBlock *> setCloned;
+//
+//    //clone loop
+//    ToClone.push_back(pLoop->getHeader());
+//
+//    while (!ToClone.empty()) {
+//
+//        BasicBlock *pCurrent = ToClone.back();
+//        ToClone.pop_back();
+//
+//        WeakTrackingVH &BBEntry = VMap[pCurrent];
+//        if (BBEntry) {
+//            continue;
+//        }
+//
+//        BasicBlock *NewBB;
+//        BBEntry = NewBB = BasicBlock::Create(pCurrent->getContext(), "", pFunction);
+//
+//        if (pCurrent->hasName()) {
+//            NewBB->setName(pCurrent->getName() + ".CPI");
+//            // add to vecCloned
+//            vecCloned.push_back(NewBB);
+//        }
+//
+//        if (pCurrent->hasAddressTaken()) {
+//            errs() << "hasAddressTaken branch\n";
+//            exit(0);
+//        }
+//
+//        for (auto &II : *pCurrent) {
+//            Instruction *Inst = &II;
+//            Instruction *NewInst = Inst->clone();
+//            if (Inst->hasName()) {
+//                NewInst->setName(Inst->getName() + ".CPI");
+//            }
+//            VMap[Inst] = NewInst;
+//            NewBB->getInstList().push_back(NewInst);
+//        }
+//
+//        const TerminatorInst *TI = pCurrent->getTerminator();
+//        for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i) {
+//            ToClone.push_back(TI->getSuccessor(i));
+//        }
+//
+//        setCloned.insert(pCurrent);
+//        BeenCloned.push_back(NewBB);
+//    }
+//
+//    //remap value used inside loop
+//    for (auto &BB : BeenCloned) {
+//        for (auto &II : *BB) {
+//            this->RemapInstruction(&II, VMap);
+//        }
+//    }
+//
+//    //add to ifBody and elseIfBody
+//    BasicBlock *pCondition1 = vecAdd[0];
+//    BasicBlock *pClonedBody = vecAdd[2];
+//
+//    auto pClonedHeader = cast<BasicBlock>(VMap[pLoop->getHeader()]);
+//
+//    BranchInst::Create(pClonedHeader, pClonedBody);
+//
+//    for (BasicBlock::iterator II = pClonedHeader->begin(); II != pClonedHeader->end(); II++) {
+//        if (auto pPHI = dyn_cast<PHINode>(II)) {
+//            // vector<int> vecToRemoved;
+//            for (unsigned i = 0, e = pPHI->getNumIncomingValues(); i != e; ++i) {
+//                if (pPHI->getIncomingBlock(i) == pCondition1) {
+//                    pPHI->setIncomingBlock(i, pClonedBody);
+//                }
+//            }
+//        }
+//    }
+//
+//    set<BasicBlock *> setProcessedBlock;
+//
+//    for (unsigned long i = 0; i < ExitBlocks.size(); i++) {
+//
+//        if (setProcessedBlock.find(ExitBlocks[i]) != setProcessedBlock.end()) {
+//            continue;
+//
+//        } else {
+//
+//            setProcessedBlock.insert(ExitBlocks[i]);
+//        }
+//
+//        for (BasicBlock::iterator II = ExitBlocks[i]->begin(); II != ExitBlocks[i]->end(); II++) {
+//
+//            if (auto pPHI = dyn_cast<PHINode>(II)) {
+//
+//                unsigned numIncomming = pPHI->getNumIncomingValues();
+//
+//                for (unsigned j = 0; j < numIncomming; j++) {
+//
+//                    BasicBlock *incommingBlock = pPHI->getIncomingBlock(j);
+//
+//                    if (VMap.find(incommingBlock) != VMap.end()) {
+//
+//                        Value *incommingValue = pPHI->getIncomingValue(j);
+//
+//                        if (VMap.find(incommingValue) != VMap.end()) {
+//                            incommingValue = VMap[incommingValue];
+//                        }
+//
+//                        pPHI->addIncoming(incommingValue, cast<BasicBlock>(VMap[incommingBlock]));
+//
+//                    }
+//                }
+//            }
+//        }
+//    }
+//}
 
 void NewLoopInstrumentor::CloneInnerLoop(Loop *pLoop, vector<BasicBlock *> &vecAdd, ValueToValueMapTy &VMap,
                                          vector<BasicBlock *> &vecCloned) {
